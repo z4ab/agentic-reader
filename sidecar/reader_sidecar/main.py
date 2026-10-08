@@ -161,11 +161,18 @@ def run() -> int:
     """Console script `reader-sidecar`. Returns the process exit code."""
     setup_streams(sys.stdin, sys.stdout)
     _setup_logging()
-    code = asyncio.run(_main(sys.stdin.buffer, sys.stdout.buffer))
-    if any(thread.name == READER_THREAD for thread in threading.enumerate()):
-        # After SIGTERM the reader thread is still in readline and holds the
-        # lock of sys.stdin.buffer. Interpreter shutdown would abort when it
-        # closes stdin, so skip it. Writer and the log handler flush per line.
-        logging.shutdown()
-        os._exit(code)
+    code = 1
+    try:
+        code = asyncio.run(_main(sys.stdin.buffer, sys.stdout.buffer))
+    except Exception:
+        # Such as BrokenPipeError when the app closed stdout.
+        log.exception("sidecar stopped on an error")
+    finally:
+        if any(thread.name == READER_THREAD for thread in threading.enumerate()):
+            # After SIGTERM or an error the reader thread is still in readline
+            # and holds the lock of sys.stdin.buffer. Interpreter shutdown
+            # would abort when it closes stdin, so skip it. Writer and the log
+            # handler flush per line.
+            logging.shutdown()
+            os._exit(code)
     return code

@@ -8,6 +8,7 @@ a reply streams.
 import asyncio
 import logging
 import os
+import traceback
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import CanUseTool
 
 from .context import build_prefix
+from .errors import CRASH_TYPES, error_kind, error_message, redact, turn_kind, turn_message
 from .io import Writer
 from .permissions import Permissions
 from .prompts import READER_PROMPT
@@ -105,10 +107,11 @@ class Chat:
     never starts the CLI.
     """
 
-    def __init__(self, chat_id: str, client: Any, writer: Writer) -> None:
+    def __init__(self, chat_id: str, client: Any, writer: Writer, on_crash: Callable[["Chat"], None]) -> None:
         self.chat_id = chat_id
         self.client = client
         self._writer = writer
+        self._on_crash = on_crash
         self._connected = False
         self._interrupted = False
         self._reply: asyncio.Task[None] | None = None
@@ -127,6 +130,7 @@ class Chat:
             self._interrupted = False
 
     async def _reply_once(self, text: str, seq: int | None) -> None:
+        failure: str | None = None
         try:
             if not self._connected:
                 await self.client.connect()
@@ -138,6 +142,12 @@ class Chat:
             await self.client.query(text)
             ended = False
             async for message in self.client.receive_response():
+                failure = failure or turn_kind(message)
+                if isinstance(message, ResultMessage) and message.is_error and failure is not None:
+                    if not (self._interrupted and failure == "result"):
+                        log.error("chat %s: reply failed with an error result, kind %s", self.chat_id, failure)
+                        await self._send_error(turn_message(failure, message), seq, kind=failure)
+                        return
                 for out in to_outbound(self.chat_id, message):
                     await self._writer.send(out)
                 ended = isinstance(message, ResultMessage)
@@ -146,17 +156,36 @@ class Chat:
                 log.info("chat %s: reply raised %s after an interrupt", self.chat_id, type(exc).__name__)
                 await self._send_error("reply interrupted", seq, kind="interrupted")
                 return
-            # M4.5 maps SDK errors to finer kinds. The message names only the
-            # exception type, so no CLI output or environment reaches the app.
-            log.exception("chat %s: reply failed", self.chat_id)
-            await self._send_error(f"reply failed: {type(exc).__name__}", seq)
+            await self._fail(exc, seq)
             return
         if not ended:
             if self._interrupted:
                 await self._send_error("reply interrupted", seq, kind="interrupted")
                 return
             log.error("chat %s: reply ended without a result", self.chat_id)
-            await self._send_error("reply ended without a result", seq)
+            if failure is not None:
+                await self._send_error(turn_message(failure, None), seq, kind=failure)
+            else:
+                await self._send_error("reply ended without a result", seq)
+
+    async def _fail(self, exc: Exception, seq: int | None) -> None:
+        """Send the error for `exc`. A chat whose CLI is gone leaves the registry first.
+
+        The log and the message hold no environment values. The message holds
+        no SDK text at all.
+        """
+        kind = error_kind(exc)
+        detail = redact("".join(traceback.format_exception(exc)))
+        log.error("chat %s: reply failed, kind %s\n%s", self.chat_id, kind, detail.rstrip())
+        crashed = isinstance(exc, CRASH_TYPES)
+        if crashed:
+            self._on_crash(self)
+        await self._send_error(error_message(exc, kind), seq, kind=kind)
+        if crashed:
+            try:
+                await self.client.disconnect()
+            except Exception as close_exc:
+                log.info("chat %s: disconnect after a crash raised %s", self.chat_id, type(close_exc).__name__)
 
     async def _send_error(self, message: str, seq: int | None, kind: str = "internal") -> None:
         await self._writer.send(Error(chat_id=self.chat_id, kind=kind, message=message, seq=seq))
@@ -209,7 +238,14 @@ class Chats:
             raise ChatError("chat_exists", "chat is already open")
         options = chat_options(self._root, session_id, self._permissions.handler(chat_id))
         client = self._factory(options)
-        self._chats[chat_id] = Chat(chat_id, client, self._writer)
+        self._chats[chat_id] = Chat(chat_id, client, self._writer, self._forget)
+
+    def _forget(self, chat: Chat) -> None:
+        """Drop a crashed chat so resume_chat can recreate its chat_id."""
+        if self._chats.get(chat.chat_id) is chat:
+            del self._chats[chat.chat_id]
+            self._permissions.deny_chat(chat.chat_id)
+            log.info("chat %s: removed after its CLI failed", chat.chat_id)
 
     def prompt(self, chat_id: str, text: str, context: Context | None, seq: int | None) -> None:
         """Start a reply in the background. Raises ChatError if the chat cannot take it.

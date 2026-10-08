@@ -3,6 +3,8 @@
 # Drops CLAUDECODE, CLAUDE_CODE_*, ANTHROPIC_*, DISPLAY and WAYLAND_DISPLAY so a
 # nested sidecar uses the local ~/.claude login and a GUI cannot reach the
 # user's desktop. Keeps READER_* vars. shot.sh adds its own Xvfb DISPLAY.
+# CLEAN_ENV_KEEP="NAME ..." keeps the named vars too, such as ANTHROPIC_API_KEY
+# for a live check with a given key. Values never appear on a command line.
 set -euo pipefail
 
 if [ $# -eq 0 ]; then
@@ -19,5 +21,10 @@ done
 while IFS='=' read -r name _; do
   vars+=("$name=${!name}")
 done < <(env | grep -E '^READER_[A-Z0-9_]*=' || true)
+for name in ${CLEAN_ENV_KEEP:-}; do
+  if [ -n "${!name+set}" ]; then
+    vars+=("$name=${!name}")
+  fi
+done
 
 exec env -i "${vars[@]}" "$@"

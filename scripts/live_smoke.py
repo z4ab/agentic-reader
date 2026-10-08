@@ -4,13 +4,20 @@
 Runs sidecar/.venv/bin/reader-sidecar through scripts/clean-env.sh, so the
 bundled CLI uses the local ~/.claude login, then sends open_project, new_chat
 and one prompt. Prints every line the sidecar writes, then a summary line.
-Exits 0 when the reply ends with a result.
+Exits 0 when the reply ends with a result. With --expect-error KIND it exits 0
+when the reply ends with an error of that kind instead.
+
+--keep-env NAME passes the caller's NAME through clean-env.sh, so
+`ANTHROPIC_API_KEY=bad scripts/live_smoke.py P --keep-env ANTHROPIC_API_KEY
+--expect-error auth` checks the bad-key path. The value is never printed.
 
 usage: scripts/live_smoke.py PROJECT [--prompt TEXT] [--timeout SECONDS]
+                             [--keep-env NAME]... [--expect-error KIND]
 """
 
 import argparse
 import json
+import os
 import queue
 import subprocess
 import sys
@@ -37,9 +44,16 @@ def main() -> int:
     parser.add_argument("project", type=Path, help="project folder")
     parser.add_argument("--prompt", default="Summarize sample.pdf in two sentences.")
     parser.add_argument("--timeout", type=float, default=300.0, help="seconds to wait for the reply")
+    parser.add_argument(
+        "--keep-env", action="append", default=[], metavar="NAME", help="pass this variable through clean-env.sh"
+    )
+    parser.add_argument("--expect-error", metavar="KIND", help="succeed when the reply ends with this error kind")
     args = parser.parse_args()
 
-    proc = subprocess.Popen([str(CLEAN_ENV), str(SIDECAR)], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    env = dict(os.environ, CLEAN_ENV_KEEP=" ".join(args.keep_env))
+    proc = subprocess.Popen(
+        [str(CLEAN_ENV), str(SIDECAR)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env
+    )
     lines: queue.Queue[bytes] = queue.Queue()
     threading.Thread(target=pump, args=(proc.stdout, lines), daemon=True).start()
 
@@ -81,6 +95,8 @@ def main() -> int:
         f"# text_delta: {counts['text_delta']}, tool_use: {counts['tool_use']}, "
         f"end: {end['type'] if end else None}, sidecar exit: {code}"
     )
+    if args.expect_error:
+        return 0 if end is not None and end["type"] == "error" and end["kind"] == args.expect_error else 1
     return 0 if end is not None and end["type"] == "result" else 1
 
 

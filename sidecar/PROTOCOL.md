@@ -211,3 +211,20 @@ Reports a failure.
 ```json
 {"type":"error","chat_id":"6f1c2a52-3b8e-4d1a-9a57-0c2b9a1e4f10","kind":"busy","message":"chat is busy","seq":4}
 ```
+
+Error kinds:
+
+- `protocol`: the line is not a valid app message.
+- `no_project`: `new_chat` or `resume_chat` before any `open_project`.
+- `chat_exists`: `new_chat` or `resume_chat` with a `chat_id` that is already open.
+- `unknown_chat`: the `chat_id` is not open. A chat closes when another project opens or when its CLI process fails.
+- `busy`: a `prompt` while the chat's reply is still running.
+- `interrupted`: the reply stopped after an `interrupt`.
+- `cli_missing`: the agent CLI was not found. The chat is closed.
+- `process`: the agent CLI process failed or could not be reached. The chat is closed.
+- `result`: the reply ended with an error result, such as hitting the turn limit. `message` names its `terminal_reason`. If the CLI process exited, the chat is closed.
+- `auth`: the API key is missing or invalid.
+- `rate_limit`: the API rate limit was reached.
+- `internal`: any other failure. The chat stays open.
+
+A reply error (`interrupted` through `internal`) ends the reply in place of `result`. When an error says the chat is closed, later messages for its `chat_id` get `unknown_chat` until the app reopens it with `resume_chat`. `auth` and `rate_limit` close the chat only when the CLI process exited. A `message` never holds environment values or the API key.
