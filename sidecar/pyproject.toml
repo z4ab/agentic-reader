@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reader-sidecar"
+description = "Agent sidecar for Agentic Reader"
+requires-python = ">=3.11"
+dynamic = ["version"]
+dependencies = [
+    "claude-agent-sdk==0.2.164",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pyinstaller>=6.15",
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]
+
+[project.scripts]
+reader-sidecar = "reader_sidecar.main:run"
+
+[tool.setuptools]
+packages = ["reader_sidecar"]
+
+[tool.setuptools.dynamic]
+version = { attr = "reader_sidecar.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

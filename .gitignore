@@ -5,3 +5,4 @@ __pycache__/
 dist/
 .worktrees/
 .verify/
+*.egg-info/
