@@ -1,0 +1,7 @@
+build*/
+vcpkg_installed/
+sidecar/.venv/
+__pycache__/
+dist/
+.worktrees/
+.verify/
