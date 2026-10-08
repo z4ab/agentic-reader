@@ -8,6 +8,117 @@ permissions:
   contents: read
 
 jobs:
+  cpp:
+    name: cpp (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg-cache,readwrite
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read vcpkg baseline
+        id: baseline
+        shell: bash
+        run: |
+          echo "commit=$(sed -n 's/.*"builtin-baseline": *"\([0-9a-f]*\)".*/\1/p' vcpkg.json)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          repository: microsoft/vcpkg
+          ref: ${{ steps.baseline.outputs.commit }}
+          path: vcpkg
+
+      # Tools and system libraries the vcpkg ports need (M1.1 notes). libsystemd builds a Python venv.
+      - name: Install system packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config ninja-build autoconf autoconf-archive automake libtool libltdl-dev \
+            bison flex gperf nasm libgtk-3-dev libsecret-1-dev libgl1-mesa-dev libglu1-mesa-dev libx11-dev libxtst-dev \
+            python3-venv
+
+      - name: Install build tools (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: brew install autoconf autoconf-archive automake libtool ninja pkgconf
+
+      - name: Set up MSVC (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Bootstrap vcpkg (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Bootstrap vcpkg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+      # The run id and attempt make every key unique, so a run that built new packages can save them.
+      # restore-keys pick the newest cache for the same manifest, then for the same OS.
+      - name: Restore vcpkg binary cache
+        uses: actions/cache/restore@v6
+        with:
+          path: vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}-
+            vcpkg-${{ runner.os }}-
+
+      - name: Mark cache state
+        shell: bash
+        run: mkdir -p vcpkg-cache && touch vcpkg-cache.stamp
+
+      - name: Configure
+        shell: bash
+        run: >-
+          cmake -B build -S . -G Ninja -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_INSTALL_OPTIONS=--clean-after-build
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Upload vcpkg logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vcpkg-logs-${{ matrix.os }}
+          path: |
+            vcpkg/buildtrees/**/*.log
+            build/vcpkg-manifest-install.log
+          if-no-files-found: ignore
+
+      # Save after a failed run too, so ports that built are not rebuilt next time.
+      - name: Check for new vcpkg packages
+        id: newpkgs
+        if: always()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for f in vcpkg-cache/*/*; do
+            if [ "$f" -nt vcpkg-cache.stamp ]; then
+              echo "found=true" >> "$GITHUB_OUTPUT"
+              break
+            fi
+          done
+
+      - name: Save vcpkg binary cache
+        if: always() && steps.newpkgs.outputs.found == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
   sidecar:
     runs-on: ubuntu-24.04
     defaults:
