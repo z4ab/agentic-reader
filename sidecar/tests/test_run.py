@@ -26,6 +26,8 @@ from reader_sidecar.main import serve
 TIMEOUT = 5.0
 READY = {"type": "ready", "version": __version__}
 NEW_CHAT_LINE = b'{"type":"new_chat","chat_id":"c1","seq":3}\n'
+# The real Router answers new_chat with no open project this way, without starting the CLI.
+NO_PROJECT = {"type": "error", "chat_id": "c1", "kind": "no_project", "message": "no project is open", "seq": 3}
 
 
 class Router:
@@ -129,7 +131,7 @@ def test_log_level_comes_from_env(value, present, absent):
     proc = sidecar({"READER_SIDECAR_LOG": value})
     out, err = proc.communicate(NEW_CHAT_LINE, timeout=60)
     assert proc.returncode == 0, err
-    assert [json.loads(line) for line in out.splitlines()] == [READY]
+    assert [json.loads(line) for line in out.splitlines()] == [READY, NO_PROJECT]
     levels = {line.split()[2] for line in err.decode().splitlines()}
     for level in present:
         assert level in levels, err

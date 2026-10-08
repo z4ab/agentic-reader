@@ -8,9 +8,13 @@ import sys
 import threading
 from typing import Any, BinaryIO, Callable
 
+from claude_agent_sdk import ClaudeSDKClient
+
 from . import __version__
+from .chats import ChatError, Chats, ClientFactory
 from .io import READER_THREAD, Writer, setup_streams, start_reader
 from .protocol import (
+    ChatStarted,
     Error,
     Inbound,
     Interrupt,
@@ -30,22 +34,28 @@ log = logging.getLogger(__name__)
 
 
 class Router:
-    """One handler per inbound message type. The handlers are stubs until M4.3."""
+    """One handler per inbound message type.
 
-    def __init__(self, writer: Writer) -> None:
+    `factory` makes each chat's client. Tests pass a fake.
+    """
+
+    def __init__(self, writer: Writer, factory: ClientFactory = ClaudeSDKClient) -> None:
         self._writer = writer
+        self._chats = Chats(writer, factory)
 
     async def open_project(self, msg: OpenProject) -> None:
-        _stub(msg)
+        await self._chats.open_project(msg.path)
 
     async def prompt(self, msg: Prompt) -> None:
-        _stub(msg)
+        self._chats.prompt(msg.chat_id, msg.text, msg.seq)
 
     async def new_chat(self, msg: NewChat) -> None:
-        _stub(msg)
+        self._chats.add(msg.chat_id, session_id=None)
+        await self._writer.send(ChatStarted(chat_id=msg.chat_id, session_id=None))
 
     async def resume_chat(self, msg: ResumeChat) -> None:
-        _stub(msg)
+        self._chats.add(msg.chat_id, session_id=msg.session_id)
+        await self._writer.send(ChatStarted(chat_id=msg.chat_id, session_id=msg.session_id))
 
     async def interrupt(self, msg: Interrupt) -> None:
         _stub(msg)
@@ -54,8 +64,12 @@ class Router:
         _stub(msg)
 
     async def close(self) -> None:
-        """Close all chats."""
-        log.debug("closing chats")
+        """Close all chats and their CLI processes.
+
+        This is the only cleanup. After SIGTERM, run() exits with os._exit,
+        which skips atexit handlers.
+        """
+        await self._chats.close()
 
 
 def _stub(msg: Inbound) -> None:
@@ -93,6 +107,10 @@ async def _handle(line: bytes, writer: Writer, router: Any) -> None:
 
     try:
         await getattr(router, msg.type)(msg)
+    except ChatError as exc:
+        await writer.send(
+            Error(chat_id=getattr(msg, "chat_id", None), kind=exc.kind, message=str(exc), seq=msg.seq)
+        )
     except Exception:
         log.exception("%s handler failed", msg.type)
         await writer.send(
