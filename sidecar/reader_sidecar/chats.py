@@ -15,18 +15,17 @@ from typing import Any
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
-    PermissionResult,
-    PermissionResultAllow,
-    PermissionResultDeny,
     ResultMessage,
     StreamEvent,
-    ToolPermissionContext,
     ToolUseBlock,
 )
+from claude_agent_sdk.types import CanUseTool
 
+from .context import build_prefix
 from .io import Writer
+from .permissions import Permissions
 from .prompts import READER_PROMPT
-from .protocol import Error, Outbound, Result, TextDelta, ToolUse
+from .protocol import Context, Error, Outbound, Result, TextDelta, ToolUse
 
 MODEL_ENV = "READER_MODEL"
 READ_ONLY_TOOLS = ["Read", "Glob", "Grep"]
@@ -47,28 +46,19 @@ class ChatError(Exception):
         self.kind = kind
 
 
-async def deny_unlisted_tools(
-    tool_name: str, tool_input: dict[str, Any], context: ToolPermissionContext
-) -> PermissionResult:
-    """Placeholder permission handler until M4.4 asks the user.
+def chat_options(root: Path, session_id: str | None, can_use_tool: CanUseTool) -> ClaudeAgentOptions:
+    """Options for a chat in `root`. `session_id` resumes a saved session.
 
-    The CLI runs READ_ONLY_TOOLS without asking, so this only sees other
-    tools, and it denies them all.
+    The CLI runs READ_ONLY_TOOLS without asking and awaits `can_use_tool`
+    for every other tool.
     """
-    if tool_name in READ_ONLY_TOOLS:
-        return PermissionResultAllow()
-    return PermissionResultDeny(message=f"Agentic Reader does not allow {tool_name} yet.")
-
-
-def chat_options(root: Path, session_id: str | None) -> ClaudeAgentOptions:
-    """Options for a chat in `root`. `session_id` resumes a saved session."""
     return ClaudeAgentOptions(
         cwd=root,
         setting_sources=["project"],
         system_prompt={"type": "preset", "preset": "claude_code", "append": READER_PROMPT},
         include_partial_messages=True,
         allowed_tools=list(READ_ONLY_TOOLS),
-        can_use_tool=deny_unlisted_tools,
+        can_use_tool=can_use_tool,
         resume=session_id,
         model=os.environ.get(MODEL_ENV) or None,
     )
@@ -120,6 +110,7 @@ class Chat:
         self.client = client
         self._writer = writer
         self._connected = False
+        self._interrupted = False
         self._reply: asyncio.Task[None] | None = None
 
     @property
@@ -131,9 +122,19 @@ class Chat:
 
     async def _run_reply(self, text: str, seq: int | None) -> None:
         try:
+            await self._reply_once(text, seq)
+        finally:
+            self._interrupted = False
+
+    async def _reply_once(self, text: str, seq: int | None) -> None:
+        try:
             if not self._connected:
                 await self.client.connect()
                 self._connected = True
+            if self._interrupted:
+                # Interrupted while connecting, so the query is never sent.
+                await self._send_error("reply interrupted", seq, kind="interrupted")
+                return
             await self.client.query(text)
             ended = False
             async for message in self.client.receive_response():
@@ -141,17 +142,38 @@ class Chat:
                     await self._writer.send(out)
                 ended = isinstance(message, ResultMessage)
         except Exception as exc:
+            if self._interrupted:
+                log.info("chat %s: reply raised %s after an interrupt", self.chat_id, type(exc).__name__)
+                await self._send_error("reply interrupted", seq, kind="interrupted")
+                return
             # M4.5 maps SDK errors to finer kinds. The message names only the
             # exception type, so no CLI output or environment reaches the app.
             log.exception("chat %s: reply failed", self.chat_id)
             await self._send_error(f"reply failed: {type(exc).__name__}", seq)
             return
         if not ended:
+            if self._interrupted:
+                await self._send_error("reply interrupted", seq, kind="interrupted")
+                return
             log.error("chat %s: reply ended without a result", self.chat_id)
             await self._send_error("reply ended without a result", seq)
 
-    async def _send_error(self, message: str, seq: int | None) -> None:
-        await self._writer.send(Error(chat_id=self.chat_id, kind="internal", message=message, seq=seq))
+    async def _send_error(self, message: str, seq: int | None, kind: str = "internal") -> None:
+        await self._writer.send(Error(chat_id=self.chat_id, kind=kind, message=message, seq=seq))
+
+    async def interrupt(self) -> None:
+        """Ask the CLI to stop the running reply. Does nothing when idle.
+
+        The reply task keeps running and ends with the CLI's result, or with
+        an `interrupted` error if the SDK raises. While the client is still
+        connecting, only the flag is set, and the reply stops before its query.
+        """
+        if not self.busy:
+            log.info("chat %s: interrupt with no running reply", self.chat_id)
+            return
+        self._interrupted = True
+        if self._connected:
+            await self.client.interrupt()
 
     async def close(self) -> None:
         """Stop the running reply, then disconnect the client and its CLI."""
@@ -169,6 +191,7 @@ class Chats:
         self._factory = factory
         self._root: Path | None = None
         self._chats: dict[str, Chat] = {}
+        self._permissions = Permissions(writer)
 
     async def open_project(self, path: str) -> None:
         """Make `path` the project. A different project closes every chat."""
@@ -184,22 +207,38 @@ class Chats:
             raise ChatError("no_project", "no project is open")
         if chat_id in self._chats:
             raise ChatError("chat_exists", "chat is already open")
-        client = self._factory(chat_options(self._root, session_id))
+        options = chat_options(self._root, session_id, self._permissions.handler(chat_id))
+        client = self._factory(options)
         self._chats[chat_id] = Chat(chat_id, client, self._writer)
 
-    def prompt(self, chat_id: str, text: str, seq: int | None) -> None:
-        """Start a reply in the background. Raises ChatError if the chat cannot take it."""
+    def prompt(self, chat_id: str, text: str, context: Context | None, seq: int | None) -> None:
+        """Start a reply in the background. Raises ChatError if the chat cannot take it.
+
+        The query is the reader_context block for `context`, then `text`.
+        """
+        chat = self._get(chat_id)
+        if chat.busy:
+            raise ChatError("busy", "chat is busy")
+        chat.start_reply(build_prefix(context, self._root) + text, seq)
+
+    async def interrupt(self, chat_id: str) -> None:
+        await self._get(chat_id).interrupt()
+
+    def permission_reply(self, req_id: str, allow: Any) -> None:
+        self._permissions.reply(req_id, allow)
+
+    def _get(self, chat_id: str) -> Chat:
         chat = self._chats.get(chat_id)
         if chat is None:
             raise ChatError("unknown_chat", "chat is not open")
-        if chat.busy:
-            raise ChatError("busy", "chat is busy")
-        chat.start_reply(text, seq)
+        return chat
 
     async def close(self) -> None:
-        """Close and forget every chat."""
+        """Deny the pending permission requests of every chat, then close and forget it."""
         chats = list(self._chats.values())
         self._chats.clear()
+        for chat in chats:
+            self._permissions.deny_chat(chat.chat_id)
         log.debug("closing %d chats", len(chats))
         outcomes = await asyncio.gather(*(chat.close() for chat in chats), return_exceptions=True)
         for chat, outcome in zip(chats, outcomes):

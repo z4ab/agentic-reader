@@ -1,17 +1,14 @@
 """Implementer tests for M4.3 cases that test_chats.py leaves out.
 
 Chats before open_project, duplicate and unknown chat IDs, failed replies,
-closing a chat mid-reply, a failing disconnect, path normalization, and the
-placeholder permission handler.
+closing a chat mid-reply, a failing disconnect, and path normalization.
 """
 
 import asyncio
 from pathlib import Path
 
 import pytest
-from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny, ToolPermissionContext
 
-from reader_sidecar.chats import deny_unlisted_tools
 from test_chats import SESSION, Sidecar, delta, result, short_turn
 
 pytestmark = pytest.mark.asyncio
@@ -135,16 +132,3 @@ async def test_same_project_by_another_spelling_keeps_chats(project):
         await sc.ask("c1")
         assert client.disconnects == 0
         assert sc.count("error", "c1") == 0
-
-
-@pytest.mark.parametrize("tool", ["Read", "Glob", "Grep"])
-async def test_permission_placeholder_allows_read_only_tools(tool):
-    result = await deny_unlisted_tools(tool, {}, ToolPermissionContext())
-    assert isinstance(result, PermissionResultAllow)
-
-
-@pytest.mark.parametrize("tool", ["Bash", "Write", "Edit", "WebFetch"])
-async def test_permission_placeholder_denies_other_tools(tool):
-    result = await deny_unlisted_tools(tool, {"command": "ls"}, ToolPermissionContext())
-    assert isinstance(result, PermissionResultDeny)
-    assert tool in result.message

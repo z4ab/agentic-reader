@@ -88,7 +88,7 @@ Reopens a saved chat. The sidecar answers with `chat_started` carrying the same 
 
 ### `interrupt`
 
-Stops the reply running in a chat.
+Stops the reply running in a chat. The reply still ends with its `result`, or with an `error` of kind `interrupted`. An interrupt for a chat with no running reply does nothing.
 
 | field | type | meaning |
 |---|---|---|
@@ -106,7 +106,7 @@ Answers a `permission_request`.
 | field | type | meaning |
 |---|---|---|
 | `req_id` | string | `req_id` from the request. |
-| `allow` | boolean | `true` runs the tool. `false` denies it. |
+| `allow` | boolean | `true` runs the tool. Any other value denies it. |
 | `seq` | integer or null | Echoed in errors. |
 
 ```json
@@ -169,7 +169,7 @@ Claude called a tool.
 
 ### `permission_request`
 
-Claude wants to run a tool that needs approval. The app answers with `permission_reply` carrying the same `req_id`.
+Claude wants to run a tool that needs approval. The app answers with `permission_reply` carrying the same `req_id`. The tool is denied if no reply arrives within 5 minutes or the chat closes first. The sidecar sends no message in either case, and it ignores a later reply.
 
 | field | type | meaning |
 |---|---|---|

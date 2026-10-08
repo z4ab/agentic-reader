@@ -16,7 +16,6 @@ from .io import READER_THREAD, Writer, setup_streams, start_reader
 from .protocol import (
     ChatStarted,
     Error,
-    Inbound,
     Interrupt,
     NewChat,
     OpenProject,
@@ -47,7 +46,7 @@ class Router:
         await self._chats.open_project(msg.path)
 
     async def prompt(self, msg: Prompt) -> None:
-        self._chats.prompt(msg.chat_id, msg.text, msg.seq)
+        self._chats.prompt(msg.chat_id, msg.text, msg.context, msg.seq)
 
     async def new_chat(self, msg: NewChat) -> None:
         self._chats.add(msg.chat_id, session_id=None)
@@ -58,10 +57,10 @@ class Router:
         await self._writer.send(ChatStarted(chat_id=msg.chat_id, session_id=msg.session_id))
 
     async def interrupt(self, msg: Interrupt) -> None:
-        _stub(msg)
+        await self._chats.interrupt(msg.chat_id)
 
     async def permission_reply(self, msg: PermissionReply) -> None:
-        _stub(msg)
+        self._chats.permission_reply(msg.req_id, msg.allow)
 
     async def close(self) -> None:
         """Close all chats and their CLI processes.
@@ -70,10 +69,6 @@ class Router:
         which skips atexit handlers.
         """
         await self._chats.close()
-
-
-def _stub(msg: Inbound) -> None:
-    log.info("%s: not implemented yet", msg.type)
 
 
 async def serve(stdin: BinaryIO, writer: Writer, router: Any) -> int:
