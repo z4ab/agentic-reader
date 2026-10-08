@@ -34,7 +34,7 @@ public:
     const std::filesystem::path& path() const { return m_path; }
     int pageCount() const;
 
-    // Media box size in points, x = width and y = height. Pages rotated by 90
+    // Crop box size in points (the area poppler renders), x = width and y = height. Pages rotated by 90
     // or 270 degrees report swapped sizes. Returns (0, 0) for an invalid page.
     wxRealPoint pageSizePts(int page) const;
 

@@ -1,0 +1,30 @@
+# M2.2 acceptance: continuous scroll of sample.pdf (3 pages of black text). Run with
+#   scripts/shot.sh -o <repo>/.verify/m2.2/<impl|review|tester> -s tests/acceptance/m2.2.steps -- ./build/app/agentic-reader tests/data/sample.pdf
+# The window sits at the screen origin. The center pane spans roughly x 220..980.
+wait 3
+
+# Center pane: grey background with page 1 as a white page with a 1px border,
+# horizontally centered, starting 12px below the top of the pane.
+# Black text on page 1 is rendered and readable (sharp, not blank or blocky).
+# Left "Project" and right "Chat" panes are unchanged.
+shot first-page
+
+# Focus the PDF view and scroll down several screens.
+click 600 500
+key Next Next Next
+wait 2
+
+# The view has scrolled: a later page (page 2 or 3) is visible with rendered
+# text, a grey 12px gap separates pages, and no torn or half-painted regions appear.
+shot scrolled
+
+# Jump to the end with the wheel to reach the last page.
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+wait 2
+
+# The bottom of page 3 is visible with rendered text and the grey margin below it.
+shot last-page

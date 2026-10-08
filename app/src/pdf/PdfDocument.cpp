@@ -21,6 +21,18 @@ std::unique_ptr<poppler::page> loadPage(const poppler::document& doc, int page)
     return std::unique_ptr<poppler::page>(doc.create_page(page));
 }
 
+wxRealPoint cropSize(const poppler::page& p)
+{
+    const poppler::rectf box = p.page_rect(poppler::crop_box);
+    switch (p.orientation()) {
+    case poppler::page::landscape:
+    case poppler::page::seascape:
+        return {box.height(), box.width()};
+    default:
+        return {box.width(), box.height()};
+    }
+}
+
 } // namespace
 
 std::unique_ptr<PdfDocument> PdfDocument::open(const std::filesystem::path& path,
@@ -65,17 +77,7 @@ int PdfDocument::pageCount() const
 wxRealPoint PdfDocument::pageSizePts(int page) const
 {
     const auto p = loadPage(*m_doc, page);
-    if (!p) {
-        return {};
-    }
-    const poppler::rectf box = p->page_rect(poppler::media_box);
-    switch (p->orientation()) {
-    case poppler::page::landscape:
-    case poppler::page::seascape:
-        return {box.height(), box.width()};
-    default:
-        return {box.width(), box.height()};
-    }
+    return p ? cropSize(*p) : wxRealPoint();
 }
 
 wxImage PdfDocument::renderPage(int page, double scale) const
@@ -86,7 +88,7 @@ wxImage PdfDocument::renderPage(int page, double scale) const
     }
 
     // Pass the size explicitly: poppler rounds the default size to nearest.
-    const wxRealPoint pts = pageSizePts(page);
+    const wxRealPoint pts = cropSize(*p);
     const int width = static_cast<int>(std::ceil(pts.x * scale));
     const int height = static_cast<int>(std::ceil(pts.y * scale));
 

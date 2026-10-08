@@ -3,6 +3,10 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 # Later test targets also link the reader_core static library (tasks/VERIFY.md).
 
+add_executable(test_page_layout test_page_layout.cpp)
+target_link_libraries(test_page_layout PRIVATE doctest::doctest reader_core)
+add_test(NAME page_layout COMMAND test_page_layout)
+
 add_executable(test_pdf_document test_pdf_document.cpp)
 target_compile_definitions(test_pdf_document PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 target_link_libraries(test_pdf_document PRIVATE doctest::doctest reader_core)

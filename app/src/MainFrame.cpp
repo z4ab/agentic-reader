@@ -1,6 +1,9 @@
 #include "MainFrame.h"
 
+#include "pdf/PdfView.h"
+
 #include <wx/aboutdlg.h>
+#include <wx/log.h>
 #include <wx/menu.h>
 #include <wx/panel.h>
 #include <wx/sizer.h>
@@ -14,13 +17,20 @@ constexpr int kRightPaneWidth = 420;
 constexpr int kMinPaneWidth = 100;
 } // namespace
 
-MainFrame::MainFrame()
+MainFrame::MainFrame(const wxString& pdfPath)
     : wxFrame(nullptr, wxID_ANY, "Agentic Reader", wxDefaultPosition, wxSize(1400, 900))
 {
     buildMenuBar();
     buildLayout();
     CreateStatusBar();
     SetStatusText("Ready");
+
+    // Temporary until the project panel opens files (M6).
+    if (!pdfPath.empty()) {
+        std::string error;
+        if (!m_pdfView->openFile(pdfPath.utf8_string(), error))
+            wxLogError("Cannot open %s: %s", pdfPath, error);
+    }
 }
 
 void MainFrame::buildMenuBar()
@@ -51,14 +61,14 @@ void MainFrame::buildLayout()
     inner->SetMinimumPaneSize(kMinPaneWidth);
 
     wxPanel* left = makePane(outer, "Project");
-    wxPanel* center = makePane(inner, "PDF");
+    m_pdfView = new PdfView(inner);
     wxPanel* right = makePane(inner, "Chat");
 
     // Resizing the window grows or shrinks only the center pane.
     outer->SetSashGravity(0.0);
     inner->SetSashGravity(1.0);
 
-    inner->SplitVertically(center, right, -kRightPaneWidth);
+    inner->SplitVertically(m_pdfView, right, -kRightPaneWidth);
     outer->SplitVertically(left, inner, kLeftPaneWidth);
 }
 

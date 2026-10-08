@@ -1,7 +1,5 @@
 #include <wx/app.h>
-#include <wx/log.h>
-
-#include <poppler-version.h>
+#include <wx/cmdline.h>
 
 #include "MainFrame.h"
 
@@ -13,13 +11,27 @@ public:
         if (!wxApp::OnInit())
             return false;
 
-        // Referencing poppler-cpp here makes the app binary link it (M1.2, risk R2).
-        wxLogDebug("poppler-cpp %s", poppler::version_string());
-
-        auto* frame = new MainFrame();
+        auto* frame = new MainFrame(m_pdfPath);
         frame->Show();
         return true;
     }
+
+    // Temporary: accept one optional PDF path (M2.2). M6 replaces this.
+    void OnInitCmdLine(wxCmdLineParser& parser) override
+    {
+        wxApp::OnInitCmdLine(parser);
+        parser.AddParam("pdf", wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL);
+    }
+
+    bool OnCmdLineParsed(wxCmdLineParser& parser) override
+    {
+        if (parser.GetParamCount() > 0)
+            m_pdfPath = parser.GetParam(0);
+        return wxApp::OnCmdLineParsed(parser);
+    }
+
+private:
+    wxString m_pdfPath;
 };
 
 wxIMPLEMENT_APP(ReaderApp);

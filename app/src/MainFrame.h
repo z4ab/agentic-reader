@@ -1,17 +1,19 @@
 #pragma once
 
 #include <wx/frame.h>
+#include <wx/string.h>
 
+class PdfView;
 class wxCommandEvent;
 class wxPanel;
-class wxString;
 class wxWindow;
 
 // Main application window: menu bar, three-pane layout, status bar.
 class MainFrame : public wxFrame
 {
 public:
-    MainFrame();
+    // Opens pdfPath in the PDF view when it is not empty.
+    explicit MainFrame(const wxString& pdfPath = wxString());
 
 private:
     void buildMenuBar();
@@ -20,4 +22,6 @@ private:
 
     void onQuit(wxCommandEvent& event);
     void onAbout(wxCommandEvent& event);
+
+    PdfView* m_pdfView = nullptr;
 };
