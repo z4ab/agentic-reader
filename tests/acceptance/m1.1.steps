@@ -1,0 +1,23 @@
+# M1.1 acceptance: empty main window. Run with
+#   scripts/shot.sh -o <repo>/.verify/m1.1/<impl|review> -s tests/acceptance/m1.1.steps -- ./build/app/agentic-reader
+# The 1400x900 "Agentic Reader" window sits at the screen origin (no window manager, no title bar).
+wait 1
+
+# Main window: a menu bar at the top with "File" and "Help".
+# Three panes side by side, each showing its label:
+#   "Project" on the left, about 220px wide.
+#   "PDF" in the center, filling the remaining width.
+#   "Chat" on the right, about 420px wide.
+# A status bar along the bottom edge of the window.
+shot main-window
+
+# Open the File menu by clicking its label near the top-left of the menu bar.
+click 20 14
+wait 1
+
+# The File menu is open below the menu bar and lists "Quit".
+shot file-menu
+
+# Close the menu. The app must still be running afterwards.
+key Escape
+wait 1
