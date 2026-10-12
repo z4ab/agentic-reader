@@ -10,11 +10,35 @@
 #include <vector>
 
 // Reading state of one PDF, stored under "files" in project.json.
+// `lastPage` is the 0-based page. `zoom` is a formatZoom() string.
 struct FileState
 {
     int lastPage = 0;
     std::string zoom;
 };
+
+enum class ZoomKind
+{
+    None,
+    FitWidth,
+    FitPage,
+    Custom,
+};
+
+// A zoom as kept in FileState::zoom. `scale` (1.0 = 100%) is used only for
+// ZoomKind::Custom.
+struct SavedZoom
+{
+    ZoomKind kind = ZoomKind::None;
+    double scale = 0.0;
+};
+
+// "fit-width", "fit-page", the custom scale as a decimal number with '.' in
+// every locale (e.g. "0.75"), or "" for ZoomKind::None.
+std::string formatZoom(const SavedZoom& zoom);
+// The inverse of formatZoom(). Text it cannot read in full, and a scale that
+// is not finite or not above 0, give ZoomKind::None.
+SavedZoom parseZoom(const std::string& text);
 
 // One entry of "chats" in project.json. Timestamps are ISO 8601 strings kept
 // as given.
@@ -66,6 +90,10 @@ public:
 
     const std::map<std::string, FileState>& files() const { return m_files; }
     void setFileState(const std::string& rel, const FileState& state) { m_files[rel] = state; }
+    // The state of `rel` to restore in a document of `pageCount` pages:
+    // lastPage clamped to 0..pageCount-1 (0 when pageCount <= 0). FileState{}
+    // when `rel` has no entry. Entries of files that are gone are kept.
+    FileState fileStateFor(const std::string& rel, int pageCount) const;
 
     const std::vector<ChatInfo>& chats() const { return m_chats; }
     void setChats(std::vector<ChatInfo> chats) { m_chats = std::move(chats); }

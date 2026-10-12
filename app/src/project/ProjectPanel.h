@@ -8,6 +8,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -51,10 +52,14 @@ public:
 private:
     void updateHeader();
     // Rebuilds the tree from disk and watches every folder that can hold a
-    // PDF, so folders created later are seen too.
+    // PDF, so folders created later are seen too. Folders the user collapsed
+    // stay collapsed. New folders show expanded.
     void refresh();
+    // Adds the relative paths of the collapsed folder rows under `parent`.
+    void collectCollapsed(const wxTreeItemId& parent, std::set<std::string>& out) const;
     void watchFolders();
-    void addRows(const wxTreeItemId& parent, const std::vector<ProjectTreeNode>& nodes);
+    void addRows(const wxTreeItemId& parent, const std::vector<ProjectTreeNode>& nodes,
+                 const std::set<std::string>& collapsed);
     // The row of `rel` under `parent`, or an invalid id.
     wxTreeItemId findRow(const wxTreeItemId& parent, const std::string& rel) const;
 

@@ -1,0 +1,118 @@
+# M6.5 acceptance, run 1 of 2: per-file reading position in a saved project.
+# Go to p. 40 of long.pdf at a custom 75% and to p. 5 of book/other.pdf at
+# Fit Width, switching between them, then quit. Run both runs with
+# tests/acceptance/m6.5.sh, which builds the fixture in /tmp/agentic-reader-
+# m6.5 (layout at the top of m6.5.sh), a scratch HOME and the M6.2 fake
+# sidecar, and checks .reader/project.json after each run. This run is
+#   scripts/shot.sh -o <out>/run1 -s tests/acceptance/m6.5.steps -- \
+#     env HOME=/tmp/agentic-reader-m6.5/home \
+#       READER_SIDECAR_CMD=<worktree>/tests/acceptance/m6.2-fake-sidecar.sh \
+#       READER_FAKE_LOG=/tmp/agentic-reader-m6.5/fake-run1.log \
+#       ./build/app/agentic-reader /tmp/agentic-reader-m6.5/proj/long.pdf
+#
+# Interface choices where the spec is silent (the implementer conforms or
+# files a TEST DISPUTE):
+#   - project.json "files" entries are keyed by the path relative to the
+#     project root ("long.pdf", "book/other.pdf"). "last_page" is 0-based
+#     (p. 40 is 39). "zoom" is "fit-width", "fit-page", or a custom scale
+#     factor as a decimal string ("0.75" for 75%). See the comment at the top
+#     of tests/test_reading_position.cpp.
+#   - Every save (debounced page change, file switch, leaving a project, app
+#     close) writes .reader/project.json at once. A page change is written 1 s
+#     after the last page change (a restarted 1 s timer): not yet 0.3 s after
+#     it, but by 2 s after it.
+#   - Opening a PDF that has an entry restores both: the page's top edge at
+#     the top of the pane (as PdfView::goToPage) and the zoom (the fit mode,
+#     or the custom scale). A PDF with no entry opens at page 1 and keeps the
+#     view's zoom mode, as before M6.5.
+#   - Switching files (tree, File > Open, Recent, drop) saves the file being
+#     left before the new one opens, so a page change less than 1 s before a
+#     switch is not lost.
+#   - Unsaved projects keep no reading positions on disk (M6.2 spec 5): no
+#     .reader/ is created for them (checked in run 2).
+#
+# Geometry at 1400x900 (see m2.4.steps and m6.2.steps): menu bar y 0..27,
+# toolbar y 28..68 with the zoom combo text at (35,48), Fit Width (148,48),
+# Fit Page (234,48), page entry (320,48) and its "/ N" total. Left pane
+# (project panel) x 0..220, (110,700) is a blank point in its tree. PDF pane
+# x 225..980, y 69..875 (client 755x806), center (600,470). Status bar field 0
+# (bottom left) is the open file's name.
+# Fit Width of long.pdf (612 pt wide) = (755 - 24) / 612 = 119%. Fit Width of
+# other.pdf (300 pt wide) = 731 / 300 = 244%; its Fit Page = (806 - 24) / 500
+# = 156%. At 75% a long.pdf page is 459 px wide, centered in the pane.
+#
+# Tree rows in proj: "book", "other.pdf" (indented under book), "long.pdf".
+wait 3
+
+# long.pdf opened from the command line in the saved project proj: header
+# "proj", tree book / other.pdf / long.pdf. "Page 1 of 520" at the top of the
+# PDF pane at Fit Width (page spans the pane width, combo "119%"), entry
+# "1 / 520", status field 0 "long.pdf".
+shot start
+
+# Custom zoom 75%, then p. 40 through the page entry.
+click 600 500
+click 35 48
+key ctrl+a
+type 75
+key Return
+wait 1
+click 320 48
+key ctrl+a
+type 40
+key Return
+# 0.3 s after the page change: not written yet (1 s debounce).
+run /tmp/agentic-reader-m6.5/state check-not /tmp/agentic-reader-m6.5/proj long.pdf 39
+wait 2
+# 2 s later, with no switch and no quit: written, page and zoom.
+run /tmp/agentic-reader-m6.5/state check /tmp/agentic-reader-m6.5/proj long.pdf 39 0.75
+
+# long.pdf at p. 40 at 75%: "Page 40 of 520" heading near the top of the PDF
+# pane, the page about 459 px wide and centered with grey on both sides,
+# combo "75%", entry "40 / 520", status field 0 "long.pdf".
+shot long-p40-75
+
+click 110 700
+key Home Down Return
+wait 3
+
+# The second row, book/other.pdf, is open for the first time: "Chapter 1 of
+# 12" at the top of the PDF pane inside a blue border, entry "1 / 12", status
+# field 0 "other.pdf". (Its zoom is not checked here: a file with no entry
+# keeps the view's zoom.) The tree is unchanged.
+shot other-first-open
+
+# Fit Width, p. 3, then switch to long.pdf by a drop about 0.3 s later, well
+# inside the 1 s debounce: the switch itself must save other.pdf.
+click 148 48
+wait 1
+click 320 48
+key ctrl+a
+type 3
+key Return
+run /tmp/agentic-reader-m6.5/xdnd-drop 600 470 /tmp/agentic-reader-m6.5/proj/long.pdf
+wait 3
+run /tmp/agentic-reader-m6.5/state check /tmp/agentic-reader-m6.5/proj book/other.pdf 2 fit-width
+
+# Back on long.pdf, its position came back in the same session: "Page 40 of
+# 520" heading near the top, page about 459 px wide and centered, combo
+# "75%", entry "40 / 520", status field 0 "long.pdf".
+shot switched-back-long
+
+click 110 700
+key Home Down Return
+wait 3
+
+# other.pdf again, at its saved position: "Chapter 3 of 12" heading near the
+# top of the PDF pane, the page with its blue border spanning the pane width
+# (Fit Width, combo "244%"), entry "3 / 12", status field 0 "other.pdf".
+# tests/acceptance/m6.5.sh checks that this shot exists.
+shot other-restored
+
+# p. 5, then quit in the same xdotool call (within milliseconds): only the
+# save at close can record p. 5 (m6.5.sh checks last_page 4 afterwards).
+click 320 48
+key ctrl+a
+type 5
+key Return ctrl+q
+wait 3

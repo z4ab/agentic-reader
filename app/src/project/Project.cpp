@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <fstream>
 #include <iterator>
@@ -105,7 +107,51 @@ json emptyProjectJson()
                 {"chats", json::array()}};
 }
 
+constexpr const char* kZoomFitWidth = "fit-width";
+constexpr const char* kZoomFitPage = "fit-page";
+
 } // namespace
+
+std::string formatZoom(const SavedZoom& zoom)
+{
+    switch (zoom.kind) {
+    case ZoomKind::None:
+        return {};
+    case ZoomKind::FitWidth:
+        return kZoomFitWidth;
+    case ZoomKind::FitPage:
+        return kZoomFitPage;
+    case ZoomKind::Custom:
+        break;
+    }
+    // Rounded to a millionth, so steps like 1.0 + 3 * 0.1 are written "1.3".
+    // std::to_chars ignores the locale.
+    const double scale = std::round(zoom.scale * 1e6) / 1e6;
+    char buf[64];
+    const auto [end, ec] = std::to_chars(buf, buf + sizeof(buf), scale);
+    if (ec != std::errc()) {
+        return {};
+    }
+    return std::string(buf, end);
+}
+
+SavedZoom parseZoom(const std::string& text)
+{
+    if (text == kZoomFitWidth) {
+        return {ZoomKind::FitWidth, 0.0};
+    }
+    if (text == kZoomFitPage) {
+        return {ZoomKind::FitPage, 0.0};
+    }
+    double scale = 0.0;
+    const char* end = text.data() + text.size();
+    const auto [ptr, ec] = std::from_chars(text.data(), end, scale);
+    if (text.empty() || ec != std::errc() || ptr != end || !std::isfinite(scale)
+        || scale <= 0.0) {
+        return {};
+    }
+    return {ZoomKind::Custom, scale};
+}
 
 Project::Project(fs::path root)
     : m_root(std::move(root))
@@ -251,6 +297,17 @@ std::vector<std::string> Project::pdfs() const
     }
     std::sort(found.begin(), found.end());
     return found;
+}
+
+FileState Project::fileStateFor(const std::string& rel, int pageCount) const
+{
+    const auto it = m_files.find(rel);
+    if (it == m_files.end()) {
+        return {};
+    }
+    FileState state = it->second;
+    state.lastPage = std::clamp(state.lastPage, 0, std::max(pageCount - 1, 0));
+    return state;
 }
 
 bool Project::save(std::string& error) const

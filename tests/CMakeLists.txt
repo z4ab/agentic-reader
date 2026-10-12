@@ -81,6 +81,10 @@ target_compile_definitions(test_protocol_cpp PRIVATE PROTOCOL_MD_PATH="${PROJECT
 target_link_libraries(test_protocol_cpp PRIVATE doctest::doctest nlohmann_json::nlohmann_json reader_core)
 add_test(NAME protocol_cpp COMMAND test_protocol_cpp)
 
+add_executable(test_reading_position test_reading_position.cpp)
+target_link_libraries(test_reading_position PRIVATE doctest::doctest nlohmann_json::nlohmann_json reader_core)
+add_test(NAME reading_position COMMAND test_reading_position)
+
 add_executable(test_selection test_selection.cpp)
 target_compile_definitions(test_selection PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 target_link_libraries(test_selection PRIVATE doctest::doctest reader_core)

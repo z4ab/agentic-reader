@@ -2,11 +2,13 @@
 
 #include <wx/frame.h>
 #include <wx/string.h>
+#include <wx/timer.h>
 
 #include <filesystem>
 #include <memory>
 
 class ChatPanel;
+struct FileState;
 class FindBar;
 class KeyStore;
 class PdfView;
@@ -20,6 +22,7 @@ class wxCommandEvent;
 class wxFileHistory;
 class wxStaticText;
 class wxTextCtrl;
+class wxTimerEvent;
 class wxWindow;
 
 // Main application window: menu bar, PDF toolbar, three-pane layout, status bar.
@@ -66,9 +69,16 @@ private:
     // Leaves the open project and makes `root` the open one: the panel shows
     // it and the chat moves to it. Does not open a file.
     void enterProject(const std::filesystem::path& root, bool save);
-    // Writes the open project's open_file to .reader/project.json. Does nothing
-    // for an unsaved project.
+    // Records the open file as the open project's open_file, with its page
+    // and zoom, and writes .reader/project.json when that changed. Does
+    // nothing for an unsaved project or a file outside the project. Cancels a
+    // pending debounced save.
     void saveProjectState();
+    // The open file's page and zoom as kept in project.json.
+    FileState currentFileState() const;
+    // Shows the just opened file at the page and zoom saved in the open
+    // project. A file with no saved state keeps page 1 and the view's zoom.
+    void restoreFileState();
     // Writes .reader/project.json, with a message box on failure.
     void saveProject();
     // Creates .reader/ in the open unsaved project.
@@ -96,6 +106,9 @@ private:
     void onPageEntered(wxCommandEvent& event);
     void onPdfPageChanged(wxCommandEvent& event);
     void onPdfZoomChanged(wxCommandEvent& event);
+    // Page and zoom changes are written this long after the last one.
+    void schedulePositionSave();
+    void onPositionTimer(wxTimerEvent& event);
     void showPage();
     void showZoom();
 
@@ -117,4 +130,6 @@ private:
     // The open project's .reader/ state. Null for an unsaved project, which
     // keeps nothing on disk.
     std::unique_ptr<Project> m_project;
+    // Debounces saving the reading position (schedulePositionSave()).
+    wxTimer m_positionTimer;
 };

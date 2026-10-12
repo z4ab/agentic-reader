@@ -33,6 +33,7 @@
 #include <wx/textdlg.h>
 #include <wx/toolbar.h>
 
+#include <algorithm>
 #include <cmath>
 #include <iterator>
 #include <map>
@@ -66,6 +67,8 @@ constexpr int kRecentProjectIdBase = kRecentFileIdBase + kRecentFileCount;
 const char* const kRecentProjectsPath = "/RecentProjects/";
 // The project open at the last exit, saved or unsaved.
 const char* const kLastProjectKey = "/Session/LastProject";
+// A page or zoom change is saved this long after the last one.
+constexpr int kPositionSaveDelayMs = 1000;
 
 wxString toWx(const fs::path& path)
 {
@@ -111,7 +114,8 @@ std::string relativeTo(const fs::path& path, const fs::path& root)
 MainFrame::MainFrame()
     : wxFrame(nullptr, wxID_ANY, "Agentic Reader", wxDefaultPosition, wxSize(1400, 900)),
       m_keyStore(makeSystemKeyStore()),
-      m_settings(std::make_unique<Settings>(*wxConfigBase::Get(), *m_keyStore))
+      m_settings(std::make_unique<Settings>(*wxConfigBase::Get(), *m_keyStore)),
+      m_positionTimer(this)
 {
     // The chat pane needs the client, so it exists before the layout.
     m_sidecar = std::make_unique<SidecarClient>(this);
@@ -122,6 +126,7 @@ MainFrame::MainFrame()
     SetStatusText("Ready", kFileField);
     m_chat->setSetupNeeded(needsSetup(*m_settings));
     Bind(wxEVT_CLOSE_WINDOW, &MainFrame::onClose, this);
+    Bind(wxEVT_TIMER, &MainFrame::onPositionTimer, this, m_positionTimer.GetId());
     startSidecar();
     showPage();
     showZoom();
@@ -158,14 +163,17 @@ void MainFrame::openFile(const wxString& path)
 
     // A PDF of the open project keeps it and its chat. Any other PDF opens
     // the saved project it belongs to, or its folder as an unsaved project.
-    // The project being left records its open file first.
+    // The file being left records its position first.
     const fs::path pdf = normalPath(fullPath);
     const fs::path folder = projectFolderFor(pdf, m_projectRoot);
     if (folder != m_projectRoot)
         enterProject(folder, false);
+    else
+        saveProjectState();
 
     m_findBar->dismiss();
     m_pdfView->setDocument(std::move(result.doc), std::move(result.password));
+    restoreFileState();
     m_fileHistory->AddFileToHistory(fullPath);
     saveFileHistory();
     showOpenedFile();
@@ -228,7 +236,7 @@ void MainFrame::enterProject(const fs::path& root, bool save)
         std::string error;
         m_project = Project::open(root, error);
         if (!m_project) {
-            wxMessageBox(wxString::Format("Cannot save \"%s\" as a project: %s.\n\n"
+            wxMessageBox(wxString::Format("Cannot open \"%s\" as a project: %s.\n\n"
                                           "It is open as an unsaved project.",
                                           toWx(root.filename()), wxString::FromUTF8(error)),
                          "Cannot Open Project", wxOK | wxICON_WARNING, this);
@@ -254,13 +262,61 @@ void MainFrame::enterProject(const fs::path& root, bool save)
 
 void MainFrame::saveProjectState()
 {
-    if (!m_project || m_project->readOnly())
+    m_positionTimer.Stop();
+    if (!m_project)
         return;
     const std::string rel = relativeTo(m_pdfView->filePath(), m_projectRoot);
-    if (rel.empty() || rel == m_project->openFile())
+    if (rel.empty())
         return;
+    bool changed = rel != m_project->openFile();
     m_project->setOpenFile(rel);
-    saveProject();
+    const FileState state = currentFileState();
+    const auto old = m_project->files().find(rel);
+    if (old == m_project->files().end() || old->second.lastPage != state.lastPage
+        || old->second.zoom != state.zoom) {
+        m_project->setFileState(rel, state);
+        changed = true;
+    }
+    // A read-only project keeps positions for this session only.
+    if (changed && !m_project->readOnly())
+        saveProject();
+}
+
+FileState MainFrame::currentFileState() const
+{
+    SavedZoom zoom{ZoomKind::Custom, m_pdfView->zoom()};
+    if (m_pdfView->zoomMode() == PdfView::ZoomMode::FitWidth)
+        zoom.kind = ZoomKind::FitWidth;
+    else if (m_pdfView->zoomMode() == PdfView::ZoomMode::FitPage)
+        zoom.kind = ZoomKind::FitPage;
+    return FileState{std::max(m_pdfView->currentPage(), 0), formatZoom(zoom)};
+}
+
+void MainFrame::restoreFileState()
+{
+    if (!m_project)
+        return;
+    const std::string rel = relativeTo(m_pdfView->filePath(), m_projectRoot);
+    if (rel.empty())
+        return;
+    const FileState state = m_project->fileStateFor(rel, m_pdfView->pageCount());
+    // The saved page first, so a fit mode fits that page's size.
+    m_pdfView->goToPage(state.lastPage);
+    const SavedZoom zoom = parseZoom(state.zoom);
+    switch (zoom.kind) {
+    case ZoomKind::FitWidth:
+        m_pdfView->fitWidth();
+        break;
+    case ZoomKind::FitPage:
+        m_pdfView->fitPage();
+        break;
+    case ZoomKind::Custom:
+        m_pdfView->setZoom(zoom.scale);
+        break;
+    case ZoomKind::None:
+        break;
+    }
+    m_pdfView->goToPage(state.lastPage);
 }
 
 void MainFrame::saveProject()
@@ -288,7 +344,10 @@ void MainFrame::saveAsProject()
     m_chat->attachProject(m_project.get());
     m_projectPanel->setSaved(true);
     addRecentProject();
-    m_project->setOpenFile(relativeTo(m_pdfView->filePath(), m_projectRoot));
+    const std::string rel = relativeTo(m_pdfView->filePath(), m_projectRoot);
+    m_project->setOpenFile(rel);
+    if (!rel.empty())
+        m_project->setFileState(rel, currentFileState());
     saveProject();
 }
 
@@ -689,11 +748,24 @@ void MainFrame::onPageEntered(wxCommandEvent& event)
 void MainFrame::onPdfPageChanged(wxCommandEvent& /*event*/)
 {
     showPage();
+    schedulePositionSave();
 }
 
 void MainFrame::onPdfZoomChanged(wxCommandEvent& /*event*/)
 {
     showZoom();
+    schedulePositionSave();
+}
+
+void MainFrame::schedulePositionSave()
+{
+    if (m_project)
+        m_positionTimer.StartOnce(kPositionSaveDelayMs);
+}
+
+void MainFrame::onPositionTimer(wxTimerEvent& /*event*/)
+{
+    saveProjectState();
 }
 
 void MainFrame::showPage()
@@ -704,5 +776,9 @@ void MainFrame::showPage()
 
 void MainFrame::showZoom()
 {
-    m_zoomCombo->ChangeValue(wxString::Format("%ld%%", std::lround(m_pdfView->zoom() * 100)));
+    // Empty with no document, like the page entry.
+    if (m_pdfView->filePath().empty())
+        m_zoomCombo->ChangeValue(wxString());
+    else
+        m_zoomCombo->ChangeValue(wxString::Format("%ld%%", std::lround(m_pdfView->zoom() * 100)));
 }

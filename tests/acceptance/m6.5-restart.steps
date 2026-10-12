@@ -1,0 +1,104 @@
+# M6.5 acceptance, run 2 of 2: after a restart both files come back at their
+# page and zoom; a hand-edited last_page beyond the end is clamped; and the
+# M6.2 review notes carried into M6.5 that show in the UI. Run with
+# tests/acceptance/m6.5.sh after run 1 (m6.5.steps), with the same scratch
+# HOME. This run is
+#   scripts/shot.sh -o <out>/run2 -s tests/acceptance/m6.5-restart.steps -- \
+#     env HOME=/tmp/agentic-reader-m6.5/home \
+#       READER_SIDECAR_CMD=<worktree>/tests/acceptance/m6.2-fake-sidecar.sh \
+#       READER_FAKE_LOG=/tmp/agentic-reader-m6.5/fake-run2.log \
+#       ./build/app/agentic-reader
+# No file on the command line.
+#
+# Interface choices are the ones at the top of m6.5.steps and m6.2.steps. In
+# addition:
+#   - After MainFrame::closeFile (the PDF pane empties: a project with no
+#     open_file opens, or a failed open), the zoom combo is empty, like the
+#     page entry. It never keeps the last document's percentage.
+#   - The project tree keeps the folders the user collapsed across a refresh.
+#     New folders still show expanded.
+#   - A failed Project::open while opening a folder (Open Project, Recent
+#     Projects, a dropped folder) shows a message box titled "Cannot Open
+#     Project" whose text starts with "Cannot open" (e.g. Cannot open "bad"
+#     as a project: ...). It does not say "Cannot save". The folder stays
+#     open as an unsaved project. "Save as project" failures keep "Cannot
+#     save".
+#
+# State after run 1: proj/.reader/project.json has open_file
+# "book/other.pdf", long.pdf at p. 40 (39) and 75% ("0.75"), book/other.pdf
+# at p. 5 (4) and "fit-width". Tree rows in proj: book, other.pdf, long.pdf.
+# Geometry and zoom values: see m6.5.steps.
+wait 4
+
+# The restart reopened proj and its open file at its position: header
+# "proj", tree book / other.pdf / long.pdf. other.pdf shows "Chapter 5 of 12"
+# near the top of the PDF pane, the page with its blue border spanning the
+# pane width (Fit Width, combo "244%"), entry "5 / 12", status field 0
+# "other.pdf".
+shot restart-restored
+
+click 110 700
+key Home Down Down Return
+wait 3
+
+# The third row, long.pdf, also kept its position across the restart: "Page
+# 40 of 520" heading near the top, the page about 459 px wide and centered,
+# combo "75%", entry "40 / 520", status field 0 "long.pdf".
+shot restart-long
+
+# Collapse "book" (first row) in the tree, then add a PDF from outside.
+click 110 700
+key Home Left
+wait 1
+
+# "book" is collapsed: the tree shows book (with a collapsed expander) and
+# long.pdf, no other.pdf row.
+shot book-collapsed
+
+run cp /tmp/agentic-reader-m6.5/src/added.pdf /tmp/agentic-reader-m6.5/proj/added.pdf
+wait 2
+
+# The refresh added added.pdf and kept book collapsed: rows book (collapsed,
+# no other.pdf under it), added.pdf, long.pdf. long.pdf is still open at
+# "Page 40 of 520", combo "75%", entry "40 / 520".
+shot collapsed-after-refresh
+
+# Edit the closed project clamp by hand: short.pdf (12 pages) at page 10000.
+run /tmp/agentic-reader-m6.5/state set /tmp/agentic-reader-m6.5/clamp short.pdf 9999 fit-page
+run /tmp/agentic-reader-m6.5/xdnd-drop 600 470 /tmp/agentic-reader-m6.5/clamp/short.pdf
+wait 3
+
+# Dropping short.pdf opened the saved project clamp at the clamped position:
+# header "clamp", tree only short.pdf, "Chapter 12 of 12" with the whole page
+# and its blue border in view (Fit Page, combo "156%"), entry "12 / 12",
+# status field 0 "short.pdf". No error box.
+shot clamp-last-page
+
+run /tmp/agentic-reader-m6.5/xdnd-drop 600 470 /tmp/agentic-reader-m6.5/blank
+wait 3
+run test -d /tmp/agentic-reader-m6.5/blank/.reader
+
+# The dropped folder blank opened as a saved project with no open_file, so
+# the PDF pane is empty: header "blank", tree only blank.pdf, no page shown,
+# page entry empty with "/ 0", status field 0 "Ready". The zoom combo is
+# empty: it does not still show "156%".
+shot closed-file-zoom-reset
+
+run /tmp/agentic-reader-m6.5/xdnd-drop 600 470 /tmp/agentic-reader-m6.5/bad
+wait 2
+
+# Opening bad, whose .reader is a regular file, failed in Project::open: a
+# message box over the window (Xvfb has no window manager, so no title bar)
+# whose text starts with 'Cannot open "bad"', gives the reason, and says it
+# is open as an unsaved project. The words "Cannot save" appear nowhere in
+# it.
+shot cannot-open-message
+
+key Return
+wait 2
+run test -f /tmp/agentic-reader-m6.5/bad/.reader
+
+# The box is gone. bad is open as an unsaved project: header "Unsaved
+# project" with the "Save as project" button, tree only bad.pdf, the PDF pane
+# empty, page entry empty with "/ 0", zoom combo empty.
+shot bad-unsaved

@@ -43,6 +43,14 @@ class wxThreadEvent;
 class PdfView : public wxScrolledCanvas
 {
 public:
+    // Custom is a fixed scale. The fit modes follow the pane size.
+    enum class ZoomMode
+    {
+        Custom,
+        FitWidth,
+        FitPage,
+    };
+
     explicit PdfView(wxWindow* parent);
     ~PdfView() override;
 
@@ -60,6 +68,7 @@ public:
     int pageCount() const { return static_cast<int>(m_sizes.size()); }
     // Scale factor, 1.0 = 100%.
     double zoom() const { return m_zoom; }
+    ZoomMode zoomMode() const { return m_zoomMode; }
     // Empty with no document.
     const std::filesystem::path& filePath() const { return m_path; }
     // Word boxes of the pages rendered so far. A page's boxes arrive with its
@@ -105,13 +114,6 @@ public:
     void goToPage(int page);
 
 private:
-    enum class ZoomMode
-    {
-        Custom,
-        FitWidth,
-        FitPage,
-    };
-
     // Asks for a 1-based page number and jumps to it (Ctrl+G).
     void showGoToPageDialog();
     void relayout();

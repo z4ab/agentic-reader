@@ -125,6 +125,8 @@ void ProjectPanel::setProject(const fs::path& root, bool saved)
     m_saved = saved;
     m_selected.clear();
     m_refreshTimer.Stop();
+    // The old project's rows must not pass their collapsed folders on.
+    m_tree->DeleteAllItems();
     // wxFileSystemWatcher attaches to the event loop running when it is made.
     if (!m_watcher && !m_root.empty()) {
         m_watcher = std::make_unique<wxFileSystemWatcher>();
@@ -162,11 +164,13 @@ void ProjectPanel::updateHeader()
 
 void ProjectPanel::refresh()
 {
+    std::set<std::string> collapsed;
+    collectCollapsed(m_tree->GetRootItem(), collapsed);
     m_tree->Freeze();
     m_tree->DeleteAllItems();
     const wxTreeItemId root = m_tree->AddRoot(wxString());
     if (!m_root.empty())
-        addRows(root, buildProjectTree(m_root));
+        addRows(root, buildProjectTree(m_root), collapsed);
     if (!m_selected.empty()) {
         const wxTreeItemId row = findRow(root, m_selected);
         if (row.IsOk())
@@ -191,7 +195,24 @@ void ProjectPanel::watchFolders()
     }
 }
 
-void ProjectPanel::addRows(const wxTreeItemId& parent, const std::vector<ProjectTreeNode>& nodes)
+void ProjectPanel::collectCollapsed(const wxTreeItemId& parent, std::set<std::string>& out) const
+{
+    if (!parent.IsOk())
+        return;
+    wxTreeItemIdValue cookie;
+    for (wxTreeItemId row = m_tree->GetFirstChild(parent, cookie); row.IsOk();
+         row = m_tree->GetNextChild(parent, cookie)) {
+        const auto* data = static_cast<const RowData*>(m_tree->GetItemData(row));
+        if (!data || !data->folder)
+            continue;
+        if (!m_tree->IsExpanded(row))
+            out.insert(data->rel);
+        collectCollapsed(row, out);
+    }
+}
+
+void ProjectPanel::addRows(const wxTreeItemId& parent, const std::vector<ProjectTreeNode>& nodes,
+                           const std::set<std::string>& collapsed)
 {
     for (const ProjectTreeNode& node : nodes) {
         const wxTreeItemId row =
@@ -199,8 +220,9 @@ void ProjectPanel::addRows(const wxTreeItemId& parent, const std::vector<Project
                                node.folder ? kFolderImage : kPdfImage, -1,
                                new RowData(node.rel, node.folder));
         if (node.folder) {
-            addRows(row, node.children);
-            m_tree->Expand(row);
+            addRows(row, node.children, collapsed);
+            if (!collapsed.contains(node.rel))
+                m_tree->Expand(row);
         }
     }
 }
