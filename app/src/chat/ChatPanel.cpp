@@ -2,6 +2,8 @@
 
 #include "agent/SidecarClient.h"
 #include "chat/Markdown.h"
+#include "chat/PermissionDialog.h"
+#include "chat/ToolFormat.h"
 
 #include <wx/button.h>
 #include <wx/html/htmlwin.h>
@@ -22,6 +24,7 @@ namespace
 constexpr int kGap = 5;
 constexpr int kInputHeight = 60;
 constexpr int kRenderDelayMs = 50;
+constexpr std::size_t kMaxToolLine = 300; // bytes shown of a tool line
 
 std::string newChatId()
 {
@@ -64,7 +67,8 @@ const Palette& palette()
 
 std::string userHtml(const std::string& text)
 {
-    return "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"6\" bgcolor=\""
+    // The <p> keeps the box clear of the line above it.
+    return "<p><table width=\"100%\" cellspacing=\"0\" cellpadding=\"6\" bgcolor=\""
            + palette().userBackground + "\"><tr><td>" + markdown::escapeText(text)
            + "</td></tr></table>";
 }
@@ -77,6 +81,21 @@ std::string greyHtml(const std::string& escaped)
 std::string redHtml(const std::string& escaped)
 {
     return "<p><font color=\"" + palette().error + "\">" + escaped + "</font></p>";
+}
+
+// A tool call as one grey line, cut short when very long.
+std::string toolHtml(const protocol::ToolUse& tool)
+{
+    std::string text = toolformat::line(tool.name, tool.input);
+    if (text.size() > kMaxToolLine) {
+        std::size_t cut = kMaxToolLine;
+        while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80)
+            --cut; // not inside a UTF-8 sequence
+        text.resize(cut);
+        text += "\xe2\x80\xa6"; // "…"
+    }
+    return "<div><font size=\"-1\" color=\"#808080\">" + markdown::escapeText(text)
+           + "</font></div>";
 }
 
 // Adds <wbr> break points inside long words, such as paths and URLs, so they
@@ -131,8 +150,10 @@ std::string addBreakPoints(std::string_view html)
         ++word;
         ++run;
         const bool more = i < html.size() && html[i] != '<' && !isSpace(html[i]);
-        const bool punct =
-            len == 1 && std::string_view("/\\-_.?=").find(c) != std::string_view::npos;
+        // Not after the dot in a number or version, such as "m5.2".
+        const bool decimal = c == '.' && i < html.size() && html[i] >= '0' && html[i] <= '9';
+        const bool punct = len == 1 && !decimal
+                           && std::string_view("/\\-_.?=").find(c) != std::string_view::npos;
         if (more && ((punct && word >= kMinWord) || run >= kMaxRun)) {
             out += "<wbr>";
             run = 0;
@@ -169,8 +190,6 @@ bool isWebLink(const wxString& href)
            || lower.StartsWith("mailto:");
 }
 
-} // namespace
-
 // <wbr>: a zero-size cell before which wxHtml may break a line. wxHtml breaks
 // only at spaces otherwise.
 class ChatBreakCell : public wxHtmlCell
@@ -201,6 +220,8 @@ TAG_HANDLER_END(CHAT_WBR)
 TAGS_MODULE_BEGIN(ChatWbr)
     TAGS_MODULE_ADD(CHAT_WBR)
 TAGS_MODULE_END(ChatWbr)
+
+} // namespace
 
 ChatPanel::ChatPanel(wxWindow* parent, SidecarClient& sidecar)
     : wxPanel(parent), m_sidecar(sidecar), m_renderTimer(this)
@@ -251,6 +272,9 @@ void ChatPanel::setUnavailable(const wxString& reason)
 
 void ChatPanel::startChat()
 {
+    // The previous chat is closed in the sidecar, or about to be.
+    if (!m_chatId.empty())
+        dropPermissions(m_chatId);
     m_chatId = newChatId();
     if (m_sessionId.empty())
         m_sidecar.send(protocol::NewChat{m_chatId, std::nullopt});
@@ -265,6 +289,10 @@ void ChatPanel::onSidecarMessage(const protocol::Outbound& msg)
             m_reply += delta->text;
             scheduleRender();
         }
+    } else if (const auto* tool = std::get_if<protocol::ToolUse>(&msg)) {
+        onToolUse(*tool);
+    } else if (const auto* request = std::get_if<protocol::PermissionRequest>(&msg)) {
+        onPermissionRequest(*request);
     } else if (const auto* result = std::get_if<protocol::Result>(&msg)) {
         onResult(*result);
     } else if (const auto* error = std::get_if<protocol::Error>(&msg)) {
@@ -274,6 +302,8 @@ void ChatPanel::onSidecarMessage(const protocol::Outbound& msg)
 
 void ChatPanel::onSidecarDown(const wxString& reason)
 {
+    // Requests to the old process cannot be answered any more.
+    dropPermissions({});
     if (m_running) {
         endReply(redHtml(markdown::escapeText(
             "The assistant stopped unexpectedly (" + reason.utf8_string()
@@ -304,6 +334,7 @@ void ChatPanel::onSidecarRestarted(const wxString& notice)
 
 void ChatPanel::onResult(const protocol::Result& result)
 {
+    dropPermissions(result.chatId);
     if (result.chatId != m_chatId)
         return;
     m_sessionId = result.sessionId;
@@ -313,6 +344,9 @@ void ChatPanel::onResult(const protocol::Result& result)
 
 void ChatPanel::onError(const protocol::Error& error)
 {
+    // A chat's error ends its reply, and with it any permission request.
+    if (error.chatId)
+        dropPermissions(*error.chatId);
     if (error.chatId && *error.chatId != m_chatId)
         return;
 
@@ -339,6 +373,59 @@ void ChatPanel::onError(const protocol::Error& error)
     }
 }
 
+void ChatPanel::onToolUse(const protocol::ToolUse& tool)
+{
+    if (!m_running || tool.chatId != m_chatId)
+        return;
+    // The line goes where the call happened, between the text around it.
+    m_replyHtml += markdown::toHtml(m_reply) + toolHtml(tool);
+    m_reply.clear();
+    scheduleRender();
+}
+
+void ChatPanel::onPermissionRequest(const protocol::PermissionRequest& request)
+{
+    if (request.chatId != m_chatId) {
+        // A chat this panel no longer shows. Nobody can judge the request.
+        m_sidecar.send(protocol::PermissionReply{request.reqId, false, std::nullopt});
+        return;
+    }
+    m_permissions.push_back(request);
+    // Not from inside the sidecar's event handler: ShowModal runs an event loop.
+    if (!m_permissionDialog)
+        CallAfter(&ChatPanel::showNextPermission);
+}
+
+void ChatPanel::showNextPermission()
+{
+    if (m_permissionDialog || m_permissions.empty())
+        return;
+    const protocol::PermissionRequest request = std::move(m_permissions.front());
+    m_permissions.pop_front();
+
+    render(); // show the tool line behind the dialog
+    PermissionDialog dialog(wxGetTopLevelParent(this), request.tool, request.input);
+    m_permissionDialog = &dialog;
+    m_permissionChatId = request.chatId;
+    const int answer = dialog.ShowModal();
+    m_permissionDialog = nullptr;
+    m_permissionChatId.clear();
+
+    if (answer != PermissionDialog::kDismissed)
+        m_sidecar.send(protocol::PermissionReply{request.reqId, answer == wxID_OK, std::nullopt});
+    if (!m_permissions.empty())
+        CallAfter(&ChatPanel::showNextPermission);
+}
+
+void ChatPanel::dropPermissions(const std::string& chatId)
+{
+    std::erase_if(m_permissions, [&](const protocol::PermissionRequest& request) {
+        return chatId.empty() || request.chatId == chatId;
+    });
+    if (m_permissionDialog && (chatId.empty() || m_permissionChatId == chatId))
+        m_permissionDialog->dismiss();
+}
+
 void ChatPanel::send()
 {
     if (!m_available || m_running)
@@ -355,6 +442,7 @@ void ChatPanel::send()
     const std::string text = value.utf8_string();
     m_historyHtml += userHtml(text);
     m_input->Clear();
+    m_replyHtml.clear();
     m_reply.clear();
     m_running = true;
     m_stopRequested = false;
@@ -374,7 +462,8 @@ void ChatPanel::stop()
 
 void ChatPanel::endReply(const std::string& trailerHtml)
 {
-    m_historyHtml += markdown::toHtml(m_reply) + trailerHtml;
+    m_historyHtml += m_replyHtml + markdown::toHtml(m_reply) + trailerHtml;
+    m_replyHtml.clear();
     m_reply.clear();
     m_running = false;
     m_stopRequested = false;
@@ -404,7 +493,7 @@ void ChatPanel::render(bool toBottom)
 
     std::string html = "<html><body>" + m_historyHtml;
     if (m_running)
-        html += markdown::toHtml(m_reply);
+        html += m_replyHtml + markdown::toHtml(m_reply);
     html += "</body></html>";
     html = addBreakPoints(html);
 

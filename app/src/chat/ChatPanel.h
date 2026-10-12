@@ -5,8 +5,10 @@
 #include <wx/panel.h>
 #include <wx/timer.h>
 
+#include <deque>
 #include <string>
 
+class PermissionDialog;
 class SidecarClient;
 class wxButton;
 class wxCommandEvent;
@@ -60,6 +62,16 @@ private:
 
     void onResult(const protocol::Result& result);
     void onError(const protocol::Error& error);
+    void onToolUse(const protocol::ToolUse& tool);
+    void onPermissionRequest(const protocol::PermissionRequest& request);
+
+    // Shows the next queued permission request, modal, and replies with the
+    // user's answer unless the request ended first.
+    void showNextPermission();
+    // The sidecar sends nothing when a request ends without an answer. Drops
+    // the requests of `chatId` (all when empty) and closes their dialog
+    // without replying.
+    void dropPermissions(const std::string& chatId);
 
     void onInputKey(wxKeyEvent& event);
     void onSend(wxCommandEvent& event);
@@ -83,7 +95,14 @@ private:
 
     bool m_running = false;
     bool m_stopRequested = false;
-    // Finished messages as HTML, and the running reply as Markdown.
+    // Finished messages as HTML. The running reply is HTML up to its last
+    // tool line, then Markdown.
     std::string m_historyHtml;
+    std::string m_replyHtml;
     std::string m_reply;
+
+    // Permission requests waiting for the dialog, and the one it shows.
+    std::deque<protocol::PermissionRequest> m_permissions;
+    PermissionDialog* m_permissionDialog = nullptr;
+    std::string m_permissionChatId;
 };

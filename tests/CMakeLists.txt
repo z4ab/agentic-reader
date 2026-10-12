@@ -63,3 +63,7 @@ add_executable(test_smoke test_smoke.cpp)
 target_compile_features(test_smoke PRIVATE cxx_std_20)
 target_link_libraries(test_smoke PRIVATE doctest::doctest)
 add_test(NAME smoke COMMAND test_smoke)
+
+add_executable(test_tool_format test_tool_format.cpp)
+target_link_libraries(test_tool_format PRIVATE doctest::doctest reader_core)
+add_test(NAME tool_format COMMAND test_tool_format)

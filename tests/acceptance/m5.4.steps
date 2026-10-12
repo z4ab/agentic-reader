@@ -1,0 +1,199 @@
+# M5.4 acceptance: tool activity lines and the permission dialog, against a
+# fake sidecar (no Claude calls). Run from the worktree root:
+#
+#   P=$(mktemp -d)                     # scratch project folder
+#   H=$(mktemp -d)                     # isolated HOME for config and logs
+#   cp tests/data/sample.pdf "$P/"
+#   READER_SIDECAR_CMD="sh $PWD/tests/acceptance/m5.4-fake-sidecar.sh" \
+#     scripts/shot.sh -o <repo>/.verify/m5.4/<impl|review|tester> \
+#     -s tests/acceptance/m5.4.steps -- \
+#     env HOME="$H" ./build/app/agentic-reader "$P/sample.pdf"
+#
+# Then, after shot.sh exits 0:
+#   grep -q "introduces the Transformer" "$P/notes.md"       # must succeed
+#   L=$(find "$H" -name sidecar.log)
+#   grep -o 'fake: {.*"type":"permission_reply".*' "$L"
+# The last command must print exactly three lines, in this order, with
+# "allow":false, "allow":false, "allow":true (Return, Escape, Alt+A below).
+# A request that is already over (timed out, chat lost, sidecar restarted)
+# gets no reply, so no fourth line. A fourth line naming the crash case's
+# req_id breaks spec 4 ("close the dialog without replying").
+#
+# Never run this with the PDF in tests/data: the fake writes notes.md into the
+# project folder, which is the folder of the open PDF.
+#
+# tests/acceptance/m5.4-fake-sidecar.sh documents the fake. In short, by
+# prompt text, each message 0.3 s apart:
+#   "tools"     text, one tool_use per formatted tool (Read, Glob, Grep,
+#               Write, Edit, Bash, WebFetch, WebSearch) plus an unknown tool
+#               mcp__notes__save, then result. About 4 s.
+#   "notes.md"  tool_use Write, then permission_request Write for
+#               <project>/notes.md, then waits for the reply. It reports the
+#               reply it got ("Permission reply: allow|deny.") and whether
+#               the file exists on disk ("notes.md exists: yes|no.").
+#   "timeout"   permission_request Bash "rm -rf build"; with no reply after
+#               4 s, "No answer, so the tool was denied." and result.
+#   "lost"      permission_request Bash "make install"; with no reply after
+#               4 s, error kind process ("simulated CLI exit, the chat is
+#               closed").
+#   "crash"     permission_request Bash "git push"; 4 s later the fake kills
+#               itself and the app restarts it.
+#   otherwise   "OK." and result.
+# A permission_reply for a req_id the running fake never sent (such as one
+# sent to the restarted fake for a request from before the crash) comes back
+# as an error "unexpected permission_reply <req_id>", a red notice. That text
+# must not appear in any shot.
+#
+# Layout (same as m5.2.steps): 1400x900 window at the screen origin, chat
+# pane x 980..1400, message input at about (1180, 800).
+#
+# Assumptions the steps rely on (the spec is silent):
+#   - PermissionDialog has two buttons labelled "&Allow" and "&Deny", so
+#     Alt+A presses Allow.
+#   - Deny is the default button and has keyboard focus when the dialog
+#     opens, so Return presses Deny.
+#   - The dialog is centred on the frame and does not cover the chat input.
+#   - Tool lines are plain text in a smaller grey font, one line per tool_use,
+#     placed in the reply where the tool_use arrived (between the text
+#     before and after it).
+wait 3
+
+click 1180 800
+type show tools
+key Return
+wait 6
+
+# Tool activity. Under the user message "show tools" the reply reads "Let me
+# look through the project first." followed by three grey lines, one per
+# tool, then "Found the section. Now a draft and some checks." followed by
+# six more grey lines, then "That is everything I needed." and the grey cost
+# line. The nine tool lines, each on a single line, in a grey (dimmer,
+# smaller or both) font unlike the reply text:
+#   Read papers/attention.pdf pages 10-12        (exactly this)
+#   Glob ... **/*.pdf
+#   Grep ... softmax ... papers
+#   Write notes/draft.md                          (no "DRAFT-BODY")
+#   Edit notes/draft.md                           (no "OLD-TEXT" or "NEW-TEXT")
+#   Bash grep -c "<b>" notes.md && wc -l notes.md (the angle brackets, quotes
+#                                                  and "&&" shown literally,
+#                                                  nothing bold)
+#   WebFetch https://arxiv.org/abs/1706.03762     (no "PROMPT-TEXT")
+#   WebSearch ... transformer positional encoding
+#   mcp__notes__save {"tags":["a","b"],"title":"Draft"}
+# No raw "tool_use" or other unformatted JSON besides the last line. Send is
+# enabled and Stop greyed out. No red notice.
+shot tool-lines
+
+click 1180 800
+type Please write a summary to notes.md
+key Return
+wait 2.5
+
+# The permission dialog is open over the main window, modal. It names the
+# tool "Write" and shows the formatted input: the full path
+# <scratch folder>/notes.md and the content "# Summary" and "The paper
+# introduces the Transformer." It has an Allow and a Deny button, with Deny
+# marked as the default (focus ring or default-button style). Behind it the
+# chat shows "I will save a short summary." and a grey line
+# "Write <scratch folder>/notes.md". Stop is enabled (the reply is running).
+shot permission-dialog
+
+click 1180 800
+type zzz
+wait 1
+
+# Still modal: the click on the chat input and the typing did not reach the
+# main window. The dialog is still open and unchanged, and the chat input
+# behind it is empty (no "zzz").
+shot dialog-is-modal
+
+key Return
+wait 2
+
+# Return pressed the default button, Deny. The dialog is closed. The reply
+# continues under the grey Write line: "Permission reply: deny." then
+# "notes.md exists: no." then the grey cost line. The chat input is empty.
+shot denied-by-return
+
+click 1180 800
+type Write it to notes.md again
+key Return
+wait 2.5
+key Escape
+wait 2
+
+# Escape denied. The dialog is closed. A second user message "Write it to
+# notes.md again" whose reply ends "Permission reply: deny." and
+# "notes.md exists: no." with the grey cost line under it.
+shot denied-by-escape
+
+click 1180 800
+type Now really write notes.md
+key Return
+wait 2.5
+key alt+a
+wait 2
+
+# Allow. The dialog is closed. A third user message "Now really write
+# notes.md" whose reply ends "Permission reply: allow." and
+# "notes.md exists: yes." with the grey cost line under it.
+shot allowed
+
+click 1180 800
+type Try the timeout case
+key Return
+wait 2.5
+
+# The permission dialog is open again, now for tool "Bash" with the command
+# "rm -rf build". Behind it the chat shows "I want to clean the build
+# folder." and a grey line "Bash rm -rf build".
+shot stale-dialog-open
+
+wait 5
+
+# Nobody answered. The fake gave up and ended the reply with `result`, so
+# the stale dialog closed by itself. The reply reads "No answer, so the tool
+# was denied." and ends with the grey cost line. Send is enabled and Stop
+# greyed out. No dialog is open.
+shot stale-dialog-closed-by-result
+
+click 1180 800
+type Now the lost case
+key Return
+wait 8
+
+# The dialog for Bash "make install" opened and then closed by itself when
+# the reply ended with an error. The reply shows "I want to install the
+# package.", a grey line "Bash make install", and a red notice containing
+# "simulated CLI exit, the chat is closed" (with M5.2's note that the chat
+# was reopened). No dialog is open. Send is enabled.
+shot stale-dialog-closed-by-error
+
+click 1180 800
+type Finally the crash case
+key Return
+wait 2.5
+
+# The permission dialog is open for tool "Bash" with the command
+# "git push". Behind it the chat shows "I want to push the branch." and a
+# grey line "Bash git push".
+shot crash-dialog-open
+
+wait 8
+
+# The sidecar died while the dialog was open and has restarted. The dialog
+# closed by itself without a reply. The chat shows M5.2's red notice that
+# the assistant stopped unexpectedly and is restarting. No red notice
+# containing "unexpected permission_reply" (that would mean the app answered
+# the old request). No dialog is open. Send is enabled.
+shot crash-dialog-closed
+
+click 1180 800
+type hello after the restart
+key Return
+wait 2
+
+# The chat works after the restart: the user message "hello after the
+# restart" and the reply "OK." with its grey cost line. Still no
+# "unexpected permission_reply" notice anywhere in view. No dialog is open.
+shot after-restart
