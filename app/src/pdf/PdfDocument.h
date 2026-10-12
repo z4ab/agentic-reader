@@ -6,6 +6,7 @@
 #include <wx/image.h>
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -61,6 +62,15 @@ public:
     // The page's words in reading order. Empty for an invalid page or a page
     // without text. Slow on dense pages, so call it off the UI thread.
     std::vector<TextBox> textBoxes(int page) const;
+
+    // Every occurrence of `query` (UTF-8) on the page in poppler's order, with
+    // poppler's page::search semantics: substrings, across the spaces between
+    // words of a line, case-insensitive unless `matchCase`. Rects use the
+    // convention of TextBox::bbox. Empty for an invalid page or an empty query.
+    // Stops early, returning what it found so far, once `cancelled` returns true.
+    // Slow (each match re-reads the page's text), so call it off the UI thread.
+    std::vector<RectPts> search(int page, const std::string& query, bool matchCase,
+                                const std::function<bool()>& cancelled = {}) const;
 
 private:
     PdfDocument(std::filesystem::path path, std::unique_ptr<poppler::document> doc);

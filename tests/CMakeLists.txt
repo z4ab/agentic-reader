@@ -12,6 +12,11 @@ add_executable(test_error_ux test_error_ux.cpp)
 target_link_libraries(test_error_ux PRIVATE doctest::doctest reader_core)
 add_test(NAME error_ux COMMAND test_error_ux)
 
+add_executable(test_find test_find.cpp)
+target_compile_definitions(test_find PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+target_link_libraries(test_find PRIVATE doctest::doctest reader_core)
+add_test(NAME find COMMAND test_find)
+
 add_executable(test_instructions test_instructions.cpp)
 target_link_libraries(test_instructions PRIVATE doctest::doctest reader_core)
 add_test(NAME instructions COMMAND test_instructions)

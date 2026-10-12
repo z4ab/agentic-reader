@@ -7,6 +7,7 @@
 #include <memory>
 
 class ChatPanel;
+class FindBar;
 class KeyStore;
 class PdfView;
 class Project;
@@ -99,6 +100,8 @@ private:
     void showZoom();
 
     PdfView* m_pdfView = nullptr;
+    // Above the PDF view, hidden until Edit > Find (Ctrl+F).
+    FindBar* m_findBar = nullptr;
     wxComboBox* m_zoomCombo = nullptr;
     wxTextCtrl* m_pageEntry = nullptr;
     wxStaticText* m_pageTotal = nullptr;

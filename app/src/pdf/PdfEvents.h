@@ -17,3 +17,8 @@ wxDECLARE_EVENT(EVT_PDF_FILE_DROPPED, wxCommandEvent);
 // Sent by PdfView whenever its text selection changes, including when it is
 // cleared. Read the new value from PdfView::selection().
 wxDECLARE_EVENT(EVT_PDF_SELECTION_CHANGED, wxCommandEvent);
+
+// Sent by PdfView whenever its find state changes: a new or ended search, more
+// matches found, the search finished, or another current match. Read the new
+// state from PdfView::findQuery(), findCurrent(), findTotal() and findDone().
+wxDECLARE_EVENT(EVT_PDF_FIND_CHANGED, wxCommandEvent);

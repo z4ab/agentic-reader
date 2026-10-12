@@ -14,10 +14,13 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 class PdfDocument;
 class RenderWorker;
+class SearchWorker;
 class wxContextMenuEvent;
 class wxGraphicsContext;
 class wxKeyEvent;
@@ -30,8 +33,9 @@ class wxSizeEvent;
 class wxThreadEvent;
 
 // Continuous vertical scroll of every page of one document. Sends
-// EVT_PDF_PAGE_CHANGED, EVT_PDF_ZOOM_CHANGED and EVT_PDF_SELECTION_CHANGED, and
-// queues EVT_PDF_FILE_DROPPED when a file is dropped on it.
+// EVT_PDF_PAGE_CHANGED, EVT_PDF_ZOOM_CHANGED, EVT_PDF_SELECTION_CHANGED and
+// EVT_PDF_FIND_CHANGED, and queues EVT_PDF_FILE_DROPPED when a file is dropped
+// on it.
 //
 // Text selection: left drag selects, double-click selects a word, triple-click
 // a line, a click without a drag clears. Ctrl+C and the context menu "Copy" put
@@ -71,6 +75,26 @@ public:
     // Called with the context menu before it shows, after its "Copy" item, so
     // callers can append items and bind their handlers on the menu.
     void setContextMenuHook(std::function<void(wxMenu&)> hook);
+
+    // Find: searches the document for `query` (UTF-8) on a worker thread,
+    // cancelling the running search. Matches stream in page by page and are
+    // highlighted on the visible pages. The first match becomes the current one
+    // and is scrolled into view. An empty query ends the find.
+    void find(const std::string& query, bool matchCase);
+    // Makes the next (`forward`) or previous match current, wrapping at both
+    // ends, and scrolls it into view.
+    void findStep(bool forward);
+    // Cancels the search and removes every find highlight.
+    void endFind();
+    // The query of the running or finished search, "" without one.
+    const std::string& findQuery() const { return m_findQuery; }
+    bool findMatchCase() const { return m_findMatchCase; }
+    // 0-based current match in document order, -1 without matches.
+    int findCurrent() const { return m_findCurrent; }
+    // Matches found so far.
+    int findTotal() const { return m_findTotal; }
+    // True once the whole document was searched.
+    bool findDone() const { return m_findDone; }
 
     // Custom zoom, clamped to kMinZoom..kMaxZoom. Keeps the pane center fixed.
     void setZoom(double zoom);
@@ -112,12 +136,23 @@ private:
     std::optional<TextPos> textPosAt(wxPoint client, bool nearest) const;
     void setSelection(std::optional<Selection> selection);
     void paintSelection(wxGraphicsContext& gc, const std::vector<int>& visible);
+    void paintMatches(wxGraphicsContext& gc, const std::vector<int>& visible);
+    // Drops every match and the current one. Does not send EVT_PDF_FIND_CHANGED.
+    void resetFind();
+    void sendFindChanged();
+    // Page and rect of the 0-based match in document order.
+    std::pair<int, const RectPts*> findMatch(int index) const;
+    // Scrolls the least needed to show the current match, centered on the axis it
+    // was off.
+    void scrollToCurrentMatch();
+    bool isPageVisible(int page) const;
     void endDrag();
 
     void onPaint(wxPaintEvent& event);
     void onSize(wxSizeEvent& event);
     void onDpiChanged(wxDPIChangedEvent& event);
     void onPageRendered(wxThreadEvent& event);
+    void onSearchResult(wxThreadEvent& event);
     void onKeyDown(wxKeyEvent& event);
     void onMouseWheel(wxMouseEvent& event);
     void onLeftDown(wxMouseEvent& event);
@@ -149,6 +184,20 @@ private:
     unsigned m_generation = 0;
     unsigned m_documentGeneration = 0;
     std::unique_ptr<RenderWorker> m_worker;
+
+    // Find. Results of another generation are dropped.
+    std::unique_ptr<SearchWorker> m_searchWorker;
+    unsigned m_findGeneration = 0;
+    std::string m_findQuery;
+    bool m_findMatchCase = false;
+    bool m_findDone = false;
+    int m_findTotal = 0;
+    int m_findCurrent = -1;
+    // Matches per page, and the pages with matches in ascending order with the
+    // document-order index of each one's first match.
+    std::unordered_map<int, std::vector<RectPts>> m_findMatches;
+    std::vector<int> m_findPages;
+    std::vector<int> m_findFirstIndex;
 
     std::optional<Selection> m_selection;
     std::function<void(wxMenu&)> m_contextMenuHook;

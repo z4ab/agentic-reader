@@ -150,3 +150,25 @@ std::vector<TextBox> PdfDocument::textBoxes(int page) const
     }
     return out;
 }
+
+std::vector<RectPts> PdfDocument::search(int page, const std::string& query, bool matchCase,
+                                         const std::function<bool()>& cancelled) const
+{
+    std::vector<RectPts> out;
+    if (query.empty())
+        return out;
+    const auto p = loadPage(*m_doc, page);
+    if (!p)
+        return out;
+
+    const poppler::ustring text = poppler::ustring::from_utf8(query.c_str());
+    const poppler::case_sensitivity_enum cs =
+        matchCase ? poppler::case_sensitive : poppler::case_insensitive;
+    poppler::rectf r;
+    auto direction = poppler::page::search_from_top;
+    while (!(cancelled && cancelled()) && p->search(text, r, direction, cs)) {
+        out.push_back({r.left(), r.top(), r.right() - r.left(), r.bottom() - r.top()});
+        direction = poppler::page::search_next_result;
+    }
+    return out;
+}

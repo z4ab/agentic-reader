@@ -3,6 +3,7 @@
 #include "agent/SidecarClient.h"
 #include "chat/ChatPanel.h"
 #include "chat/SetupBanner.h"
+#include "pdf/FindBar.h"
 #include "pdf/OpenPdf.h"
 #include "pdf/PdfEvents.h"
 #include "pdf/PdfView.h"
@@ -24,6 +25,7 @@
 #include <wx/filename.h>
 #include <wx/menu.h>
 #include <wx/msgdlg.h>
+#include <wx/panel.h>
 #include <wx/sizer.h>
 #include <wx/splitter.h>
 #include <wx/stattext.h>
@@ -162,6 +164,7 @@ void MainFrame::openFile(const wxString& path)
     if (folder != m_projectRoot)
         enterProject(folder, false);
 
+    m_findBar->dismiss();
     m_pdfView->setDocument(std::move(result.doc), std::move(result.password));
     m_fileHistory->AddFileToHistory(fullPath);
     saveFileHistory();
@@ -305,6 +308,7 @@ void MainFrame::showOpenedFile()
 
 void MainFrame::closeFile()
 {
+    m_findBar->dismiss();
     m_pdfView->closeDocument();
     m_projectPanel->selectFile(std::string());
     SetStatusText("Ready", kFileField);
@@ -386,6 +390,8 @@ void MainFrame::buildMenuBar()
 
     // On macOS wx moves wxID_PREFERENCES to the app menu.
     auto* editMenu = new wxMenu();
+    editMenu->Append(wxID_FIND, "&Find...\tCtrl+F");
+    editMenu->AppendSeparator();
     editMenu->Append(wxID_PREFERENCES, "&Preferences...");
 
     auto* projectMenu = new wxMenu();
@@ -416,6 +422,7 @@ void MainFrame::buildMenuBar()
     // unsaved, can have one.
     Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& event) { event.Enable(!m_projectRoot.empty()); },
          instructionsId);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_findBar->activate(); }, wxID_FIND);
 }
 
 void MainFrame::buildToolBar()
@@ -467,7 +474,15 @@ void MainFrame::buildLayout()
     m_projectPanel->Bind(EVT_PROJECT_FILE_ACTIVATED, &MainFrame::onProjectFileActivated, this);
     m_projectPanel->Bind(EVT_PROJECT_SAVE_REQUESTED, &MainFrame::onSaveAsProject, this);
     m_projectPanel->Bind(EVT_PROJECT_PATH_DROPPED, &MainFrame::onPathDropped, this);
-    m_pdfView = new PdfView(inner);
+    // The find bar sits above the PDF view in the center pane.
+    auto* center = new wxPanel(inner, wxID_ANY, wxDefaultPosition, wxDefaultSize, 0);
+    m_pdfView = new PdfView(center);
+    m_findBar = new FindBar(center, m_pdfView);
+    m_findBar->MoveBeforeInTabOrder(m_pdfView);
+    auto* centerSizer = new wxBoxSizer(wxVERTICAL);
+    centerSizer->Add(m_findBar, 0, wxEXPAND);
+    centerSizer->Add(m_pdfView, 1, wxEXPAND);
+    center->SetSizer(centerSizer);
     m_pdfView->Bind(EVT_PDF_PAGE_CHANGED, &MainFrame::onPdfPageChanged, this);
     m_pdfView->Bind(EVT_PDF_ZOOM_CHANGED, &MainFrame::onPdfZoomChanged, this);
     m_pdfView->Bind(EVT_PDF_FILE_DROPPED, &MainFrame::onPathDropped, this);
@@ -477,7 +492,7 @@ void MainFrame::buildLayout()
     outer->SetSashGravity(0.0);
     inner->SetSashGravity(1.0);
 
-    inner->SplitVertically(m_pdfView, m_chat, -kRightPaneWidth);
+    inner->SplitVertically(center, m_chat, -kRightPaneWidth);
     outer->SplitVertically(m_projectPanel, inner, kLeftPaneWidth);
 }
 

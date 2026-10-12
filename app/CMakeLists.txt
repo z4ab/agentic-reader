@@ -18,12 +18,14 @@ add_library(reader_core STATIC
     src/chat/PermissionDialog.cpp
     src/chat/SetupBanner.cpp
     src/chat/ToolFormat.cpp
+    src/pdf/FindBar.cpp
     src/pdf/OpenPdf.cpp
     src/pdf/PageCache.cpp
     src/pdf/PageLayout.cpp
     src/pdf/PdfDocument.cpp
     src/pdf/PdfView.cpp
     src/pdf/RenderWorker.cpp
+    src/pdf/SearchWorker.cpp
     src/pdf/Selection.cpp
     src/pdf/TextLayer.cpp
     src/pdf/ViewNav.cpp

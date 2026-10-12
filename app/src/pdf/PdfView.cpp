@@ -2,6 +2,7 @@
 
 #include "pdf/PdfDocument.h"
 #include "pdf/RenderWorker.h"
+#include "pdf/SearchWorker.h"
 
 #include <wx/clipbrd.h>
 #include <wx/dataobj.h>
@@ -21,6 +22,7 @@ wxDEFINE_EVENT(EVT_PDF_PAGE_CHANGED, wxCommandEvent);
 wxDEFINE_EVENT(EVT_PDF_ZOOM_CHANGED, wxCommandEvent);
 wxDEFINE_EVENT(EVT_PDF_FILE_DROPPED, wxCommandEvent);
 wxDEFINE_EVENT(EVT_PDF_SELECTION_CHANGED, wxCommandEvent);
+wxDEFINE_EVENT(EVT_PDF_FIND_CHANGED, wxCommandEvent);
 
 namespace {
 // One mouse wheel line. Scrolling itself is per pixel (scroll rate 1).
@@ -31,6 +33,10 @@ const wxColour kBackground(0x80, 0x80, 0x80);
 const wxColour kBorder(0x40, 0x40, 0x40);
 // 35% of 255: the selection highlight's alpha over the system highlight colour.
 constexpr unsigned char kHighlightAlpha = 89;
+// Find highlights, translucent so the text stays readable: every match, and the
+// current one.
+const wxColour kMatchFill(0xff, 0xdc, 0x00, 0x73);
+const wxColour kCurrentMatchFill(0xff, 0x78, 0x00, 0xa6);
 // Pointer travel in pixels before a left press becomes a drag.
 constexpr int kDragThreshold = 3;
 // How far a click may land from the double-click and still be a triple-click.
@@ -70,6 +76,7 @@ PdfView::PdfView(wxWindow* parent)
     Bind(wxEVT_SIZE, &PdfView::onSize, this);
     Bind(wxEVT_DPI_CHANGED, &PdfView::onDpiChanged, this);
     Bind(EVT_PAGE_RENDERED, &PdfView::onPageRendered, this);
+    Bind(EVT_SEARCH_RESULT, &PdfView::onSearchResult, this);
     Bind(wxEVT_KEY_DOWN, &PdfView::onKeyDown, this);
     Bind(wxEVT_MOUSEWHEEL, &PdfView::onMouseWheel, this);
     Bind(wxEVT_LEFT_DOWN, &PdfView::onLeftDown, this);
@@ -91,8 +98,9 @@ PdfView::PdfView(wxWindow* parent)
 
 PdfView::~PdfView()
 {
-    // Stops and joins the render thread before this handler goes away.
+    // Stops and joins the worker threads before this handler goes away.
     m_worker.reset();
+    m_searchWorker.reset();
 }
 
 void PdfView::setDocument(std::unique_ptr<PdfDocument> doc, std::string password)
@@ -108,7 +116,10 @@ void PdfView::setDocument(std::unique_ptr<PdfDocument> doc, std::string password
     endDrag();
     ++m_generation;
     m_documentGeneration = m_generation;
+    endFind();
+    m_searchWorker.reset();
     m_worker.reset();
+    m_searchWorker = std::make_unique<SearchWorker>(this, m_path, password);
     m_worker = std::make_unique<RenderWorker>(this, m_path, std::move(password));
     m_cache.clear();
     m_textLayer.clear();
@@ -204,6 +215,8 @@ void PdfView::closeDocument()
         return;
     endDrag();
     setSelection(std::nullopt);
+    endFind();
+    m_searchWorker.reset();
     // Results already queued from the old worker carry the old generation.
     ++m_generation;
     m_documentGeneration = m_generation;
@@ -651,10 +664,41 @@ void PdfView::onPaint(wxPaintEvent& /*event*/)
     }
     m_worker->setRequests(std::move(wanted));
 
-    if (m_selection) {
+    const bool matchesVisible =
+        std::any_of(visible.begin(), visible.end(),
+                    [this](int page) { return m_findMatches.count(page) != 0; });
+    if (m_selection || matchesVisible) {
         std::unique_ptr<wxGraphicsContext> gc(wxGraphicsContext::Create(dc));
-        if (gc)
+        if (gc && matchesVisible)
+            paintMatches(*gc, visible);
+        if (gc && m_selection)
             paintSelection(*gc, visible);
+    }
+}
+
+void PdfView::paintMatches(wxGraphicsContext& gc, const std::vector<int>& visible)
+{
+    const auto [currentPage, current] = findMatch(m_findCurrent);
+    gc.SetPen(*wxTRANSPARENT_PEN);
+    wxGraphicsPath path = gc.CreatePath();
+    for (int page : visible) {
+        const auto it = m_findMatches.find(page);
+        if (it == m_findMatches.end())
+            continue;
+        for (const RectPts& match : it->second) {
+            if (&match == current)
+                continue;
+            const PageRect r = m_layout.pageToView(page, match);
+            path.AddRectangle(r.x, r.y, r.w, r.h);
+        }
+    }
+    gc.SetBrush(wxBrush(kMatchFill));
+    gc.FillPath(path, wxWINDING_RULE);
+
+    if (current && std::binary_search(visible.begin(), visible.end(), currentPage)) {
+        const PageRect r = m_layout.pageToView(currentPage, *current);
+        gc.SetBrush(wxBrush(kCurrentMatchFill));
+        gc.DrawRectangle(r.x, r.y, r.w, r.h);
     }
 }
 
@@ -708,4 +752,130 @@ void PdfView::onPageRendered(wxThreadEvent& event)
 
     const PageRect r = m_layout.pageRect(result.page);
     RefreshRect(wxRect(CalcScrolledPosition(wxPoint(r.x - 1, r.y - 1)), wxSize(r.w + 2, r.h + 2)));
+}
+
+void PdfView::find(const std::string& query, bool matchCase)
+{
+    if (query.empty()) {
+        endFind();
+        return;
+    }
+    if (!m_doc || !m_searchWorker)
+        return;
+    resetFind();
+    m_findQuery = query;
+    m_findMatchCase = matchCase;
+    m_searchWorker->start(query, matchCase, m_findGeneration);
+    Refresh();
+    sendFindChanged();
+}
+
+void PdfView::findStep(bool forward)
+{
+    const int next = stepMatch(m_findCurrent, m_findTotal, forward);
+    if (next < 0)
+        return;
+    m_findCurrent = next;
+    scrollToCurrentMatch();
+    Refresh();
+    sendFindChanged();
+}
+
+void PdfView::endFind()
+{
+    if (m_findQuery.empty())
+        return;
+    if (m_searchWorker)
+        m_searchWorker->cancel();
+    resetFind();
+    Refresh();
+    sendFindChanged();
+}
+
+void PdfView::resetFind()
+{
+    // Results of the old search may already be queued. They carry the old generation.
+    ++m_findGeneration;
+    m_findQuery.clear();
+    m_findMatchCase = false;
+    m_findDone = false;
+    m_findTotal = 0;
+    m_findCurrent = -1;
+    m_findMatches.clear();
+    m_findPages.clear();
+    m_findFirstIndex.clear();
+}
+
+void PdfView::sendFindChanged()
+{
+    wxCommandEvent event(EVT_PDF_FIND_CHANGED, GetId());
+    event.SetEventObject(this);
+    ProcessWindowEvent(event);
+}
+
+std::pair<int, const RectPts*> PdfView::findMatch(int index) const
+{
+    if (index < 0 || index >= m_findTotal)
+        return {-1, nullptr};
+    // The last page whose first match is at or before `index`.
+    const auto it = std::upper_bound(m_findFirstIndex.begin(), m_findFirstIndex.end(), index) - 1;
+    const auto slot = static_cast<std::size_t>(it - m_findFirstIndex.begin());
+    const int page = m_findPages[slot];
+    const std::vector<RectPts>& matches = m_findMatches.at(page);
+    return {page, &matches[static_cast<std::size_t>(index - *it)]};
+}
+
+bool PdfView::isPageVisible(int page) const
+{
+    const wxPoint origin = CalcUnscrolledPosition(wxPoint(0, 0));
+    const PageRect r = m_layout.pageRect(page);
+    return r.y < origin.y + m_viewport.y && r.y + r.h > origin.y &&
+           r.x < origin.x + m_viewport.x && r.x + r.w > origin.x;
+}
+
+void PdfView::scrollToCurrentMatch()
+{
+    const auto [page, match] = findMatch(m_findCurrent);
+    if (!match)
+        return;
+    const PageRect r = m_layout.pageToView(page, *match);
+    const wxPoint origin = CalcUnscrolledPosition(wxPoint(0, 0));
+    int x = origin.x;
+    int y = origin.y;
+    if (r.x < origin.x || r.x + r.w > origin.x + m_viewport.x)
+        x = r.x + r.w / 2 - m_viewport.x / 2;
+    if (r.y < origin.y || r.y + r.h > origin.y + m_viewport.y)
+        y = r.y + r.h / 2 - m_viewport.y / 2;
+    if (x != origin.x || y != origin.y)
+        scrollToOrigin(x, y);
+}
+
+void PdfView::onSearchResult(wxThreadEvent& event)
+{
+    auto result = event.GetPayload<SearchResult>();
+    if (result.generation != m_findGeneration || m_findQuery.empty())
+        return;
+    if (result.done) {
+        m_findDone = true;
+        sendFindChanged();
+        return;
+    }
+    if (result.matches.empty() || m_findMatches.count(result.page) != 0)
+        return;
+
+    const int page = result.page;
+    m_findPages.push_back(page);
+    m_findFirstIndex.push_back(m_findTotal);
+    m_findTotal += static_cast<int>(result.matches.size());
+    m_findMatches.emplace(page, std::move(result.matches));
+    if (m_findCurrent < 0) {
+        // The first match of a new search becomes the current one.
+        m_findCurrent = 0;
+        scrollToCurrentMatch();
+    }
+    if (isPageVisible(page)) {
+        const PageRect r = m_layout.pageRect(page);
+        RefreshRect(wxRect(CalcScrolledPosition(wxPoint(r.x, r.y)), wxSize(r.w, r.h)));
+    }
+    sendFindChanged();
 }

@@ -1,0 +1,230 @@
+# M3.3 acceptance: the find bar on tests/data/long.pdf (520 US Letter pages, see
+# tests/data/make_long_pdf.py). Page n shows the heading "Page n of 520", 25 lines
+# "Line i of page n. The quick brown fox jumps over the lazy dog." and a blue line
+# pattern in its lower half. Run from the worktree root with a fresh HOME:
+#   mkdir -p /tmp/agentic-reader-m3.3/home
+#   scripts/shot.sh -o <repo>/.verify/m3.3/<impl|review> -s tests/acceptance/m3.3.steps -- \
+#     env HOME=/tmp/agentic-reader-m3.3/home ./build/app/agentic-reader tests/data/long.pdf
+#
+# Expected counts (see tests/test_find.cpp, pdftotext as the proxy for Papers): poppler's
+# page::search matches substrings, case-insensitive unless Match case is on.
+#   "fox"            13000 (25 on every page; counting takes about 30 s with page::search)
+#   "520"            546   (every heading, plus "Page 520" and 25 x "of page 520." on page 520)
+#   "page 7"         286   (26 on page 7 and on each of pages 70..79)
+#   "Page", Match case  520   (the headings only)
+#
+# Interface choices where the spec is silent:
+#   - Ctrl+F shows the bar directly above the PDF pane, in the pane's column, and moves
+#     keyboard focus to its text field. The pane loses the bar's height at the top, so
+#     every pane y below shifts down by the bar's height (about 35 to 45 px). Ctrl+F
+#     works whenever the main window has focus.
+#   - The bar holds, left to right: the text field, a "previous" button, a "next"
+#     button, a "Match case" checkbox (unchecked at start), the count text and a close
+#     button at the right end. Tab order follows that: field, previous, next, Match case,
+#     close (the count text takes no focus). Space presses the focused button or toggles
+#     the focused checkbox.
+#   - The search runs as the text changes (a debounce of at most 150 ms is fine) and
+#     again when Match case changes. Each new query cancels the running one.
+#   - A new query makes the first match in document order the current match ("1 of N")
+#     as soon as it arrives, and scrolls it into view if it is not visible. While the
+#     search runs, N grows. The count text is "k of N" (1-based k); its text with no
+#     query or no match is the implementation's choice.
+#   - Enter in the field or the next button goes to the next match, Shift+Enter or the
+#     previous button to the previous one, wrapping at both ends, and scrolls the
+#     current match into view when it is not fully visible. Scrolling by hand does not
+#     change the current match.
+#   - Highlights: every match on the visible pages gets a translucent yellow fill over
+#     its rect; the current match gets an orange fill instead. The black text stays
+#     readable through both.
+#   - Esc in the field and the close button hide the bar, cancel the search and remove
+#     every highlight. The view does not scroll when the bar closes.
+#
+# Geometry without the bar (default 1400x900 window at the screen origin, measured on
+# the M3.2 build): menu bar y 0..24, toolbar y 25..66, PDF pane x 225..980 and y
+# 67..877. At fit width ("119%") page 1's top edge is at y 79, "Page 1 of 520" at about
+# y 145..195, "Line 1 of page 1" at about y 242..256 and "Line 25 of page 1" at about
+# y 643..657; the word "fox" on each line is at about x 524..542. A wheel notch scrolls
+# 60 px. Page n+1 starts 958 px below page n.
+wait 3
+
+# Focus the PDF view.
+click 600 500
+wait 1
+
+# Start: page 1 of long.pdf at fit width, combo "119%", entry "1 / 520". No find bar,
+# nothing highlighted.
+shot start
+
+key ctrl+f
+wait 1
+
+# Ctrl+F: the find bar is visible above the PDF pane, with an empty text field that has
+# keyboard focus (cursor shown), a previous and a next button, an unchecked "Match case"
+# checkbox, an empty (or neutral) count text and a close button. The page moved down by
+# the bar's height. Nothing is highlighted.
+shot bar-open
+
+type fox
+
+# Taken about 0.4 s after the last keystroke (the step pause plus the capture): the
+# field reads "fox", the count reads "1 of N" with N at least 25, and every "fox" on
+# page 1's 25 lines has a yellow fill except the one on Line 1, which is orange. The
+# rest of each line is not highlighted. The UI did not wait for the whole document.
+shot typed-fox
+
+wait 1
+
+# About 1.5 s later: still "1 of M" with M larger than N in typed-fox and below 13000:
+# the count keeps growing while the search continues. Same highlights as typed-fox.
+shot counting
+
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+wait 1
+
+# The UI stays responsive during the search: the wheel scrolled the view 600 px down
+# while searching. Only the last lines of page 1 remain at the top of the pane, then
+# the blue pattern, then page 2's heading "Page 2 of 520" and its first lines. Every
+# visible "fox" (page 1's last lines and page 2's lines) is yellow; none is orange (the
+# current match on Line 1 of page 1 is above the pane). The count reads "1 of P" with P
+# larger than M in counting: the search went on during the scroll. The focus stayed in
+# the field.
+shot scrolled-while-searching
+
+key Return
+wait 1
+
+# Enter: the count reads "2 of ...". The view scrolled back up so that Line 2 of page 1
+# is in view; its "fox" is orange. Line 1's "fox" and the other visible ones are yellow.
+shot enter-next
+
+key Return
+wait 1
+
+# Enter again: "3 of ...", orange on Line 3's "fox" of page 1, Line 2's is yellow now.
+# The view did not move (the match was already visible).
+shot enter-next-again
+
+key shift+Return
+wait 1
+
+# Shift+Enter: back to "2 of ...", orange on Line 2's "fox", Line 3's is yellow again.
+shot shift-enter-prev
+
+key Tab Tab space
+wait 1
+
+# The next button (focused with two Tabs, pressed with Space): "3 of ...", orange on
+# Line 3's "fox".
+shot next-button
+
+key shift+Tab space
+wait 1
+
+# The previous button: "2 of ...", orange on Line 2's "fox".
+shot prev-button
+
+key shift+Tab
+key Escape
+wait 1
+
+# Esc in the field: the find bar is gone and no highlight is left anywhere. The pane
+# is back to its full height (it starts at y 67 again) and page 1's text did not scroll
+# apart from moving up by the bar's height.
+shot esc-closed
+
+key ctrl+f
+key ctrl+a
+type 520
+wait 10
+
+# Ctrl+F again, "520" typed over any old text. The search has finished: the count reads
+# exactly "1 of 546". The "520" of page 1's heading "Page 1 of 520" is orange. No line
+# of page 1 contains "520", so nothing else on page 1 is highlighted.
+shot 520-done
+
+key Return
+wait 1
+
+# Enter: "2 of 546". The view scrolled so that page 2's heading "Page 2 of 520" is in
+# view; its "520" is orange. Page 1's heading "520", if still visible, is yellow.
+shot 520-next-scrolls
+
+key shift+Return
+wait 1
+
+# Shift+Enter: back to "1 of 546", page 1's heading in view with its "520" orange.
+shot 520-prev-scrolls
+
+key shift+Return
+wait 2
+
+# Shift+Enter on the first match wraps to the last: "546 of 546". The view jumped to
+# the end of the document: page 520's lines are in view, and the "520" in "Line 25 of
+# page 520." is orange. The "520" in each other visible line of page 520 is yellow.
+shot wrap-to-last
+
+key shift+Return
+wait 1
+
+# Shift+Enter: "545 of 546", orange moved up one line to "Line 24 of page 520.";
+# Line 25's "520" is yellow.
+shot last-minus-one
+
+key Return
+key Return
+wait 2
+
+# Enter twice: to "546 of 546", then wrapping to the first match: "1 of 546". The
+# view is back at page 1 with the "520" of "Page 1 of 520" orange.
+shot wrap-to-first
+
+key ctrl+a
+type page 7
+wait 8
+
+# "page 7" (a substring that spans two words, case-insensitive): the count reads exactly
+# "1 of 286". The view scrolled to page 7: the "Page 7" of its heading "Page 7 of 520"
+# is orange and the "page 7" in each visible line "Line i of page 7." is yellow. The
+# numbers before them ("Line i of") are not highlighted.
+shot page7-done
+
+key ctrl+a
+type Page
+wait 2
+
+# "Page" with Match case off: the view is back at page 1. The heading's "Page" is
+# orange and the "page" in every line of page 1 is yellow. The count reads "1 of N"
+# and is still growing (13520 when done).
+shot page-any-case
+
+key Tab Tab Tab space
+wait 8
+
+# Match case checked (three Tabs from the field, Space): the old search was cancelled
+# and a case-sensitive one ran to the end. The checkbox is checked, the count reads
+# exactly "1 of 520", page 1's heading "Page" is orange and no line's "page" is
+# highlighted any more.
+shot match-case-done
+
+wait 3
+
+# Unchanged: still exactly "1 of 520". No result of the cancelled case-insensitive
+# search arrived after the new one started, so the count did not grow and no line's
+# "page" turned yellow.
+shot match-case-stable
+
+key Tab space
+wait 1
+
+# The close button (one Tab from the checkbox, Space): the bar is gone, nothing is
+# highlighted, and the pane is back to its full height.
+shot close-button
