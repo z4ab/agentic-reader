@@ -1,22 +1,26 @@
 #include "chat/ChatPanel.h"
 
 #include "agent/SidecarClient.h"
+#include "chat/ChatList.h"
 #include "chat/Markdown.h"
 #include "chat/PermissionDialog.h"
 #include "chat/SetupBanner.h"
 #include "chat/ToolFormat.h"
 
 #include <wx/button.h>
+#include <wx/choice.h>
 #include <wx/html/htmlwin.h>
 #include <wx/html/m_templ.h>
+#include <wx/msgdlg.h>
 #include <wx/settings.h>
 #include <wx/sizer.h>
 #include <wx/textctrl.h>
+#include <wx/textdlg.h>
 #include <wx/utils.h>
 
+#include <algorithm>
 #include <cinttypes>
 #include <cstdio>
-#include <random>
 #include <variant>
 
 namespace
@@ -26,21 +30,8 @@ constexpr int kGap = 5;
 constexpr int kInputHeight = 60;
 constexpr int kRenderDelayMs = 50;
 constexpr std::size_t kMaxToolLine = 300; // bytes shown of a tool line
-
-std::string newChatId()
-{
-    static std::mt19937_64 rng{std::random_device{}()};
-    std::uint64_t hi = rng();
-    std::uint64_t lo = rng();
-    hi = (hi & ~std::uint64_t{0xf000}) | 0x4000;                 // version 4
-    lo = (lo & ~(std::uint64_t{3} << 62)) | (std::uint64_t{2} << 62); // RFC 4122 variant
-    char buf[37];
-    std::snprintf(buf, sizeof buf, "%08" PRIx64 "-%04" PRIx64 "-%04" PRIx64 "-%04" PRIx64
-                  "-%012" PRIx64,
-                  hi >> 32, (hi >> 16) & 0xffff, hi & 0xffff, lo >> 48,
-                  lo & std::uint64_t{0xffffffffffff});
-    return buf;
-}
+constexpr int kChatChoiceMinWidth = 150;
+const char* const kUntitled = "New chat";
 
 // Colours that read on the system theme, light or dark.
 struct Palette
@@ -184,6 +175,48 @@ std::string resultFooter(const protocol::Result& result)
     return greyHtml(buf);
 }
 
+// "$0.0123", the cost line of a reply loaded from a transcript.
+std::string costHtml(double costUsd)
+{
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "$%.4f", costUsd);
+    return greyHtml(buf);
+}
+
+// A saved transcript as the view shows it.
+std::string transcriptHtml(const std::vector<ChatMessage>& messages)
+{
+    std::string html;
+    for (const ChatMessage& message : messages) {
+        if (message.role == "user") {
+            html += userHtml(message.text);
+        } else if (message.role == "assistant") {
+            html += markdown::toHtml(message.text);
+            if (message.costUsd)
+                html += costHtml(*message.costUsd);
+        }
+    }
+    return html;
+}
+
+std::string cannotResumeHtml(const std::string& message)
+{
+    return redHtml(markdown::escapeText("This chat cannot resume: " + message))
+           + greyHtml("Its messages stay here. Press Continue in new chat to go on in a "
+                      "new chat that gets the last messages as context.");
+}
+
+// Error kinds that say a resumed session failed when they come before the
+// chat's first `result`. The others are about the request (busy,
+// interrupted, auth, rate_limit), the app (protocol, no_project,
+// chat_exists, unknown_chat) or the installation (cli_missing).
+bool failsResume(const std::string& kind)
+{
+    return kind != "busy" && kind != "interrupted" && kind != "auth" && kind != "rate_limit"
+           && kind != "protocol" && kind != "no_project" && kind != "chat_exists"
+           && kind != "unknown_chat" && kind != "cli_missing";
+}
+
 bool isWebLink(const wxString& href)
 {
     const wxString lower = href.Lower();
@@ -227,24 +260,43 @@ TAGS_MODULE_END(ChatWbr)
 ChatPanel::ChatPanel(wxWindow* parent, SidecarClient& sidecar)
     : wxPanel(parent), m_sidecar(sidecar), m_renderTimer(this)
 {
+    // The dropdown's width follows the pane, not its longest title.
+    m_chatChoice = new wxChoice(this, wxID_ANY);
+    m_chatChoice->SetMinSize(wxSize(FromDIP(kChatChoiceMinWidth), -1));
+    m_newChat = new wxButton(this, wxID_ANY, "&New chat", wxDefaultPosition, wxDefaultSize,
+                             wxBU_EXACTFIT);
+    m_rename = new wxButton(this, wxID_ANY, "&Rename", wxDefaultPosition, wxDefaultSize,
+                            wxBU_EXACTFIT);
+    m_delete = new wxButton(this, wxID_ANY, "&Delete", wxDefaultPosition, wxDefaultSize,
+                            wxBU_EXACTFIT);
+    auto* chatRow = new wxBoxSizer(wxHORIZONTAL);
+    chatRow->Add(m_chatChoice, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, kGap);
+    chatRow->Add(m_newChat, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, kGap);
+    chatRow->Add(m_rename, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, kGap);
+    chatRow->Add(m_delete, 0, wxALIGN_CENTER_VERTICAL);
+
     m_view = new wxHtmlWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                               wxHW_SCROLLBAR_AUTO | wxBORDER_THEME);
     m_input = new wxTextCtrl(this, wxID_ANY, wxString(), wxDefaultPosition,
                              wxSize(-1, kInputHeight), wxTE_MULTILINE);
     m_retry = new wxButton(this, wxID_ANY, "Retry");
+    m_continue = new wxButton(this, wxID_ANY, "&Continue in new chat");
     m_send = new wxButton(this, wxID_ANY, "Send");
     m_stop = new wxButton(this, wxID_ANY, "Stop");
     m_banner = new SetupBanner(this);
 
-    // Retry at the left end, Send and Stop at the right.
+    // Retry or Continue in new chat at the left end, Send and Stop at the
+    // right.
     m_buttons = new wxBoxSizer(wxHORIZONTAL);
     m_buttons->Add(m_retry);
+    m_buttons->Add(m_continue);
     m_buttons->AddStretchSpacer();
     m_buttons->Add(m_send, 0, wxRIGHT, kGap);
     m_buttons->Add(m_stop);
 
     // M5.3 adds the context chip between the view and the input.
     auto* sizer = new wxBoxSizer(wxVERTICAL);
+    sizer->Add(chatRow, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, kGap);
     sizer->Add(m_view, 1, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, kGap);
     sizer->Add(m_input, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, kGap);
     sizer->Add(m_buttons, 0, wxEXPAND | wxALL, kGap);
@@ -256,19 +308,59 @@ ChatPanel::ChatPanel(wxWindow* parent, SidecarClient& sidecar)
     m_send->Bind(wxEVT_BUTTON, &ChatPanel::onSend, this);
     m_stop->Bind(wxEVT_BUTTON, &ChatPanel::onStop, this);
     m_retry->Bind(wxEVT_BUTTON, &ChatPanel::onRetry, this);
+    m_continue->Bind(wxEVT_BUTTON, &ChatPanel::onContinue, this);
+    m_chatChoice->Bind(wxEVT_CHOICE, &ChatPanel::onChatChosen, this);
+    m_newChat->Bind(wxEVT_BUTTON, &ChatPanel::onNewChat, this);
+    m_rename->Bind(wxEVT_BUTTON, &ChatPanel::onRename, this);
+    m_delete->Bind(wxEVT_BUTTON, &ChatPanel::onDelete, this);
     m_view->Bind(wxEVT_HTML_LINK_CLICKED, &ChatPanel::onLink, this);
     Bind(wxEVT_TIMER, &ChatPanel::onRenderTimer, this);
 
+    m_continue->Hide();
     updateControls();
     render();
 }
 
-void ChatPanel::openProject(const std::string& path)
+ChatPanel::~ChatPanel() = default;
+
+void ChatPanel::openProject(const std::string& path, Project* project)
 {
+    closeProject();
+    // The sidecar closes every chat of another project.
     m_sidecar.send(protocol::OpenProject{path, std::nullopt});
     m_hasProject = true;
-    m_sessionId.clear();
-    startChat();
+    m_chats = std::make_unique<ChatList>(project);
+    const std::vector<ChatInfo> chats = m_chats->chats();
+    if (chats.empty())
+        newChat();
+    else
+        selectChat(chats.front().id);
+}
+
+void ChatPanel::closeProject()
+{
+    interruptReply();
+    dropPermissions({});
+    m_hasProject = false;
+    m_saveErrorShown = false;
+    m_chats.reset();
+    m_chatId.clear();
+    m_openChats.clear();
+    m_resuming.clear();
+    m_cannotResume.clear();
+    m_continuations.clear();
+    m_retryText.clear();
+    refreshChatList();
+    updateControls();
+}
+
+void ChatPanel::attachProject(Project* project)
+{
+    if (!m_chats)
+        return;
+    std::string error;
+    if (!m_chats->attach(project, error))
+        noteSaveError(error);
 }
 
 void ChatPanel::setUnavailable(const wxString& reason)
@@ -286,16 +378,101 @@ void ChatPanel::setSetupNeeded(bool setupNeeded)
     updateControls();
 }
 
-void ChatPanel::startChat()
+void ChatPanel::selectChat(const std::string& id)
 {
-    // The previous chat is closed in the sidecar, or about to be.
-    if (!m_chatId.empty())
-        dropPermissions(m_chatId);
-    m_chatId = newChatId();
-    if (m_sessionId.empty())
-        m_sidecar.send(protocol::NewChat{m_chatId, std::nullopt});
-    else
-        m_sidecar.send(protocol::ResumeChat{m_chatId, m_sessionId, std::nullopt});
+    if (m_running || !m_chats)
+        return;
+    const ChatInfo* chat = m_chats->find(id);
+    if (!chat)
+        return;
+    m_chatId = id;
+    m_retryText.clear();
+    m_historyHtml = transcriptHtml(m_chats->transcript(id));
+    if (const auto it = m_cannotResume.find(id); it != m_cannotResume.end())
+        m_historyHtml += cannotResumeHtml(it->second);
+    if (const auto it = m_continuations.find(id); it != m_continuations.end()) {
+        m_historyHtml += greyHtml(markdown::escapeText(
+            "Continued from \xe2\x80\x9c" + it->second.from + "\xe2\x80\x9d. Your first message here "
+            "goes with its last " + std::to_string(std::min(it->second.messages.size(),
+                                                            chatlist::kContextMessages))
+            + " messages as context."));
+    }
+    openChat(id);
+    refreshChatList();
+    updateControls();
+    render(true);
+}
+
+void ChatPanel::newChat()
+{
+    if (m_running || !m_chats)
+        return;
+    std::string error;
+    const std::string id = m_chats->create(error);
+    selectChat(id);
+    // After selectChat(), which replaces the view.
+    if (!error.empty())
+        noteSaveError(error);
+}
+
+void ChatPanel::openChat(const std::string& id)
+{
+    if (!m_hasProject || !m_chats || m_openChats.contains(id) || m_cannotResume.contains(id))
+        return;
+    const ChatInfo* chat = m_chats->find(id);
+    if (!chat)
+        return;
+    const protocol::Inbound msg = chatlist::openMessage(*chat);
+    if (std::holds_alternative<protocol::ResumeChat>(msg))
+        m_resuming.insert(id);
+    m_openChats.insert(id);
+    m_sidecar.send(msg);
+}
+
+void ChatPanel::forgetOpenChats()
+{
+    m_openChats.clear();
+    m_resuming.clear();
+}
+
+std::string ChatPanel::chatLabel(const ChatInfo& chat) const
+{
+    std::string label = chat.title.empty() ? kUntitled : chat.title;
+    if (m_cannotResume.contains(chat.id))
+        label += " (cannot resume)";
+    return label;
+}
+
+void ChatPanel::refreshChatList()
+{
+    std::vector<std::string> ids;
+    wxArrayString labels;
+    if (m_chats) {
+        for (const ChatInfo& chat : m_chats->chats()) {
+            ids.push_back(chat.id);
+            labels.Add(wxString::FromUTF8(chatLabel(chat)));
+        }
+    }
+    // Rebuilding the GTK combo box while it handles a selection is not safe,
+    // and a selection changes no entry.
+    if (ids != m_choiceIds || labels != m_chatChoice->GetStrings()) {
+        m_chatChoice->Set(labels);
+        m_choiceIds = std::move(ids);
+    }
+    const auto it = std::find(m_choiceIds.begin(), m_choiceIds.end(), m_chatId);
+    const int index = it == m_choiceIds.end() ? wxNOT_FOUND
+                                              : static_cast<int>(it - m_choiceIds.begin());
+    if (m_chatChoice->GetSelection() != index)
+        m_chatChoice->SetSelection(index);
+}
+
+void ChatPanel::noteSaveError(const std::string& error)
+{
+    if (m_saveErrorShown)
+        return;
+    m_saveErrorShown = true;
+    m_historyHtml += redHtml(markdown::escapeText("This chat is not saved: " + error));
+    render(true);
 }
 
 void ChatPanel::onSidecarMessage(const protocol::Outbound& msg)
@@ -303,6 +480,7 @@ void ChatPanel::onSidecarMessage(const protocol::Outbound& msg)
     if (const auto* delta = std::get_if<protocol::TextDelta>(&msg)) {
         if (m_running && delta->chatId == m_chatId) {
             m_reply += delta->text;
+            m_replyText += delta->text;
             scheduleRender();
         }
     } else if (const auto* tool = std::get_if<protocol::ToolUse>(&msg)) {
@@ -325,9 +503,10 @@ void ChatPanel::onSidecarDown(const wxString& reason)
                                               + reason.utf8_string() + ")"))
                  + greyHtml("Send your message again."));
     }
-    // The old chat died with the process. Queued until the restart is ready.
-    if (m_hasProject)
-        startChat();
+    // The open chats died with the process. The selected one is reopened,
+    // queued until the restarted sidecar is ready.
+    forgetOpenChats();
+    openChat(m_chatId);
 }
 
 void ChatPanel::interruptReply()
@@ -346,18 +525,23 @@ void ChatPanel::onSidecarRestarted(const wxString& notice)
     updateButtons();
     render(true);
     // Queued until the new sidecar is ready.
-    if (m_hasProject)
-        startChat();
+    forgetOpenChats();
+    openChat(m_chatId);
 }
 
 void ChatPanel::onResult(const protocol::Result& result)
 {
     dropPermissions(result.chatId);
-    if (result.chatId != m_chatId)
+    // The session resumed, and a continued chat has its context now.
+    m_resuming.erase(result.chatId);
+    m_continuations.erase(result.chatId);
+    if (result.chatId != m_chatId || !m_running || !m_chats)
         return;
-    m_sessionId = result.sessionId;
-    if (m_running)
-        endReply(resultFooter(result));
+    std::string error;
+    if (!m_chats->addResult(m_chatId, m_replyText, result, error))
+        noteSaveError(error);
+    endReply(resultFooter(result));
+    refreshChatList();
 }
 
 void ChatPanel::onError(const protocol::Error& error)
@@ -370,6 +554,14 @@ void ChatPanel::onError(const protocol::Error& error)
     // A chat's error ends its reply, and with it any permission request.
     if (error.chatId)
         dropPermissions(*error.chatId);
+    if (error.chatId && m_resuming.contains(*error.chatId) && failsResume(error.kind)) {
+        onResumeFailed(*error.chatId, error.message);
+        return;
+    }
+    if (error.chatId && errorClosesChat(error.kind)) {
+        m_openChats.erase(*error.chatId);
+        m_resuming.erase(*error.chatId);
+    }
     if (error.chatId && *error.chatId != m_chatId)
         return;
 
@@ -403,10 +595,10 @@ void ChatPanel::onError(const protocol::Error& error)
     }
 
     // These leave the chat closed in the sidecar. Reopen it for the next send.
-    if (errorClosesChat(error.kind) && m_hasProject) {
+    if (errorClosesChat(error.kind) && m_hasProject && m_chats && m_chats->find(m_chatId)) {
         if (action != ErrorAction::Reinstall)
             notice += greyHtml("The chat was reopened. Send your message again.");
-        startChat();
+        openChat(m_chatId);
     }
 
     if (endsReply) {
@@ -418,10 +610,32 @@ void ChatPanel::onError(const protocol::Error& error)
     updateControls();
 }
 
+void ChatPanel::onResumeFailed(const std::string& chatId, const std::string& message)
+{
+    // Not reopened: another resume would fail the same way.
+    m_resuming.erase(chatId);
+    m_openChats.erase(chatId);
+    m_cannotResume[chatId] = message;
+    if (chatId == m_chatId) {
+        const std::string notice = cannotResumeHtml(message);
+        if (m_running) {
+            endReply(notice);
+        } else {
+            m_historyHtml += notice;
+            render();
+        }
+    }
+    refreshChatList();
+    updateControls();
+}
+
 void ChatPanel::onToolUse(const protocol::ToolUse& tool)
 {
     if (!m_running || tool.chatId != m_chatId)
         return;
+    // Text before and after a tool call are separate paragraphs.
+    if (!m_replyText.empty() && !m_replyText.ends_with("\n\n"))
+        m_replyText += "\n\n";
     // The line goes where the call happened, between the text around it.
     m_replyHtml += markdown::toHtml(m_reply) + toolHtml(tool);
     m_reply.clear();
@@ -483,8 +697,13 @@ void ChatPanel::send()
     const wxString value = m_input->GetValue();
     if (value.Strip(wxString::both).empty())
         return;
-    if (!m_hasProject) {
+    if (!m_hasProject || !m_chats || !m_chats->find(m_chatId)) {
         m_historyHtml += redHtml("Open a PDF to start a chat.");
+        render(true);
+        return;
+    }
+    if (m_cannotResume.contains(m_chatId)) {
+        m_historyHtml += redHtml("This chat cannot resume. Press Continue in new chat to go on.");
         render(true);
         return;
     }
@@ -494,22 +713,33 @@ void ChatPanel::send()
 
 void ChatPanel::retry()
 {
-    if (!canSend() || m_retryText.empty() || !m_hasProject)
+    if (!canSend() || m_retryText.empty() || !m_hasProject || !m_chats
+        || m_cannotResume.contains(m_chatId))
         return;
     startReply(m_retryText);
 }
 
 void ChatPanel::startReply(std::string text)
 {
+    // A continued chat sends the old chat's messages with each prompt until
+    // a reply came through.
+    std::string prompt = text;
+    if (const auto it = m_continuations.find(m_chatId); it != m_continuations.end())
+        prompt = chatlist::continuePrompt(it->second.messages, text);
+    std::string error;
+    if (!m_chats->addUserMessage(m_chatId, text, error))
+        noteSaveError(error);
     m_historyHtml += userHtml(text);
     m_lastPrompt = text;
     m_retryText.clear();
     m_replyHtml.clear();
     m_reply.clear();
+    m_replyText.clear();
     m_running = true;
     m_stopRequested = false;
+    refreshChatList();
     updateControls();
-    m_sidecar.send(protocol::Prompt{m_chatId, text, std::nullopt, std::nullopt});
+    m_sidecar.send(protocol::Prompt{m_chatId, prompt, std::nullopt, std::nullopt});
     render(true);
 }
 
@@ -527,6 +757,7 @@ void ChatPanel::endReply(const std::string& trailerHtml)
     m_historyHtml += m_replyHtml + markdown::toHtml(m_reply) + trailerHtml;
     m_replyHtml.clear();
     m_reply.clear();
+    m_replyText.clear();
     m_running = false;
     m_stopRequested = false;
     updateButtons();
@@ -539,10 +770,18 @@ void ChatPanel::updateButtons()
     m_stop->Enable(m_running && !m_stopRequested);
     m_retry->Enable(m_available && !m_running);
     const bool retry = !m_retryText.empty() && !m_running && !m_setupNeeded && !m_keyRejected;
-    if (m_retry->IsShown() != retry) {
+    const bool cont = !m_running && m_cannotResume.contains(m_chatId);
+    if (m_retry->IsShown() != retry || m_continue->IsShown() != cont) {
         m_retry->Show(retry);
+        m_continue->Show(cont);
         m_buttons->Layout();
     }
+    // Chats change only between replies.
+    const bool chats = m_chats != nullptr && !m_running;
+    m_chatChoice->Enable(chats && !m_choiceIds.empty());
+    m_newChat->Enable(chats);
+    m_rename->Enable(chats && m_chats->find(m_chatId));
+    m_delete->Enable(chats && m_chats->find(m_chatId));
 }
 
 void ChatPanel::updateControls()
@@ -636,6 +875,88 @@ void ChatPanel::onStop(wxCommandEvent& /*event*/)
 void ChatPanel::onRetry(wxCommandEvent& /*event*/)
 {
     retry();
+    m_input->SetFocus();
+}
+
+void ChatPanel::onChatChosen(wxCommandEvent& event)
+{
+    const int index = event.GetSelection();
+    if (index < 0 || static_cast<std::size_t>(index) >= m_choiceIds.size())
+        return;
+    if (m_running) {
+        refreshChatList(); // put the selection back
+        return;
+    }
+    if (m_choiceIds[static_cast<std::size_t>(index)] != m_chatId)
+        selectChat(m_choiceIds[static_cast<std::size_t>(index)]);
+}
+
+void ChatPanel::onNewChat(wxCommandEvent& /*event*/)
+{
+    newChat();
+    m_input->SetFocus();
+}
+
+void ChatPanel::onRename(wxCommandEvent& /*event*/)
+{
+    if (!m_chats || !m_chats->find(m_chatId))
+        return;
+    const std::string id = m_chatId;
+    wxTextEntryDialog dialog(wxGetTopLevelParent(this), "Name of this chat:", "Rename Chat",
+                             wxString::FromUTF8(m_chats->find(id)->title));
+    if (dialog.ShowModal() != wxID_OK)
+        return;
+    const std::string title = dialog.GetValue().Strip(wxString::both).utf8_string();
+    // The chat may be gone, after a project switch during the dialog.
+    if (title.empty() || !m_chats || !m_chats->find(id))
+        return;
+    std::string error;
+    if (!m_chats->rename(id, title, error))
+        noteSaveError(error);
+    refreshChatList();
+}
+
+void ChatPanel::onDelete(wxCommandEvent& /*event*/)
+{
+    if (m_running || !m_chats || !m_chats->find(m_chatId))
+        return;
+    const std::string id = m_chatId;
+    const std::string label = chatLabel(*m_chats->find(id));
+    wxMessageDialog dialog(wxGetTopLevelParent(this),
+                           wxString::FromUTF8("Delete the chat \xe2\x80\x9c" + label
+                                              + "\xe2\x80\x9d?\n\nIts messages are removed from "
+                                                "this project. This cannot be undone."),
+                           "Delete Chat", wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
+    if (dialog.ShowModal() != wxID_YES || m_running || !m_chats || !m_chats->find(id))
+        return;
+    std::string error;
+    const bool removed = m_chats->remove(id, error);
+    m_openChats.erase(id);
+    m_resuming.erase(id);
+    m_cannotResume.erase(id);
+    m_continuations.erase(id);
+    const std::vector<ChatInfo> chats = m_chats->chats();
+    if (chats.empty())
+        newChat();
+    else
+        selectChat(chats.front().id);
+    if (!removed)
+        noteSaveError(error);
+}
+
+void ChatPanel::onContinue(wxCommandEvent& /*event*/)
+{
+    if (m_running || !m_chats || !m_chats->find(m_chatId) || !m_cannotResume.contains(m_chatId))
+        return;
+    const ChatInfo& old = *m_chats->find(m_chatId);
+    Continuation continuation{old.title.empty() ? kUntitled : old.title,
+                              m_chats->transcript(m_chatId)};
+    std::string error;
+    const std::string id = m_chats->create(error);
+    m_continuations[id] = std::move(continuation);
+    selectChat(id);
+    if (!error.empty())
+        noteSaveError(error);
     m_input->SetFocus();
 }
 

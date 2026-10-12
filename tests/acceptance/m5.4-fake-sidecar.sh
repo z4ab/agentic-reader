@@ -41,7 +41,8 @@
 #     "lost"      `permission_request` Bash {"command":"make install"}; after
 #                 the same wait without a reply, `error` kind process
 #                 ("simulated CLI exit, the chat is closed") and the chat is
-#                 closed (later prompts to it get unknown_chat).
+#                 closed (later prompts to it get unknown_chat until the app
+#                 reopens it with new_chat or resume_chat under the same id).
 #     "crash"     `permission_request` Bash {"command":"git push"}; after the
 #                 same wait the fake kills itself (an unexpected exit), so the
 #                 app restarts the sidecar while the dialog is open.
@@ -238,6 +239,10 @@ start_chat() { # line session_json
   seq="$(seq_of "$1")"
   if [ -z "$project" ]; then
     error "\"$id\"" no_project "no project is open" "$seq"
+  elif [ -e "$state/closed-$id" ]; then
+    # A closed chat may be reopened under its own id (PROTOCOL.md).
+    rm -f "$state/closed-$id"
+    emit "{\"type\":\"chat_started\",\"chat_id\":\"$id\",\"session_id\":$2}"
   elif [ "${chats#* "$id" }" != "$chats" ]; then
     error "\"$id\"" chat_exists "chat is already open" "$seq"
   else

@@ -1,0 +1,227 @@
+# M6.4 acceptance, run 1 of 3: the chat list above the message view, chats
+# saved to the project as they happen, New chat, Rename, Delete with its
+# confirmation, a chat whose first reply fails. Run all three runs with
+# tests/acceptance/m6.4.sh, which builds the fixture in /tmp/agentic-reader-m6.4,
+# a scratch HOME (developer login on, so no first-run banner) and the logging
+# fake sidecar (tests/acceptance/m6.4-fake-sidecar.py), and checks the
+# sidecar log, project.json and the JSONL transcripts after each run
+# (tests/acceptance/m6.4-check.py). This run opens /tmp/agentic-reader-m6.4/
+# proj/paper.pdf; proj is a saved project with no chats yet.
+#
+# The fake replies to a prompt in 3 or 4 text_delta pieces, 0.2 s apart:
+#   "Answer <n> in this session. You said: <the prompt's last line>."
+# and for a chat opened with resume_chat it adds
+#   " Earlier in this session you first asked: <the session's first prompt>."
+# then `result` ($0.0010, 10 in, 5 out). A prompt ending "#fail" gets one
+# piece ("Checking the document... ") and an `error` kind result
+# ("error_max_turns: the reply hit the turn limit") instead of `result`. A
+# second new_chat/resume_chat for a chat already open in the same sidecar
+# process gets `error` chat_exists ("chat is already open") and a prompt to a
+# chat that is not open gets unknown_chat ("chat is not open"), as from the
+# real sidecar. Either shows as a red notice: no shot may show one.
+#
+# Interface choices where the spec is silent (the implementer conforms or
+# files a TEST DISPUTE). Shared by m6.4-restart.steps and m6.4-unsaved.steps:
+#   - Layout as in tests/acceptance/m5.2.steps: 1400x900 window at the
+#     origin, chat pane x 980..1400, input at about (1180, 800). The chat
+#     list is one row at the top of the chat pane, above the message view:
+#     the dropdown first (leftmost, at least 150 px wide, its width not set by
+#     its longest title, so the buttons stay in the pane), then three
+#     wxButtons "&New chat", "&Rename" and "&Delete". Alt+N, Alt+R and Alt+D
+#     press them wherever the focus is in the main window. (1040, 90) is
+#     inside the dropdown.
+#   - The dropdown is a wxChoice (a GtkComboBox): its entries are the
+#     project's chats, newest `updated` first, each shown by its title (an
+#     untitled chat by a placeholder such as "New chat"). The selected entry
+#     is the chat shown in the view. A click on it opens the list; Escape
+#     closes the list and leaves the keyboard focus on the dropdown, where
+#     End selects the last entry and Home/Down the first/next, each firing
+#     wxEVT_CHOICE, which selects that chat.
+#   - Selecting a chat shows its transcript from .reader/chats/<id>.jsonl
+#     (user messages as in M5.2, replies rendered as Markdown) and opens it
+#     in the sidecar with resume_chat {chat_id, session_id} under its own id.
+#     A chat with no session_id (its first reply failed, M4.5 carried note)
+#     opens with new_chat {chat_id} under its own id instead, keeps its
+#     transcript, and its first `result` stores the session_id. A chat is
+#     opened at most once per sidecar process: selecting a chat that this
+#     sidecar already has open (created or resumed earlier) sends nothing.
+#     After the sidecar restarts (EVT_SIDECAR_DOWN) none is open, and the
+#     selected chat is opened again as soon as the new sidecar is ready.
+#   - Opening a project selects its most recently updated chat. A project
+#     with no chats starts a new chat at once (new_chat), shown as the only
+#     entry.
+#   - New chat: a new id, new_chat, the new chat is selected with an empty
+#     view and becomes the top entry. Its title comes from its first message.
+#   - Every user message is appended to the chat's JSONL when sent, every
+#     `result` appends the whole reply (with cost_usd) when it arrives. A
+#     reply that ends with an `error` appends nothing besides the user
+#     message.
+#   - Rename opens a wxTextEntryDialog holding the title: Ctrl+A, typing and
+#     Return set the new title.
+#   - Delete asks first with a wxMessageDialog (Yes/No buttons, so Alt+Y
+#     answers Yes and Escape answers No) that names the chat. Yes removes the
+#     entry and its JSONL and selects the most recently updated chat left (a
+#     new chat when none is left). No changes nothing.
+#   - A failed resume: an `error` for a chat opened with resume_chat that
+#     arrives before that chat's first `result` (here kind process, "No
+#     conversation found with session ID: ...", as the CLI reports a session
+#     it cannot resume). The transcript stays in the view, the chat is marked
+#     "cannot resume" (a notice in the view, the dropdown entry, or both, with
+#     those words), it is not opened again, and a wxButton
+#     "&Continue in new chat" appears in the chat pane without moving the
+#     input. Alt+C presses it: a new chat (new_chat, a new id) is selected,
+#     and its first prompt carries the last 20 messages of the failed chat
+#     followed by the user's message (chatlist::continuePrompt, see
+#     tests/test_chat_list.cpp). That first prompt may go out at once or with
+#     the next message the user sends; the steps send one message either way.
+#   - An unsaved project (no .reader/) has the same chat list, kept in memory
+#     only: nothing about its chats is written anywhere.
+wait 4
+
+# Start. Right pane, top to bottom: the chat list row (dropdown at the left
+# showing one new, untitled chat or a placeholder, then "New chat", "Rename",
+# "Delete"), an empty message view, the empty input, Send (enabled) and Stop.
+# No first-run banner, no red notice. The PDF pane shows paper.pdf
+# ("Page One"), the project header names "proj".
+shot start
+
+click 1180 800
+type ALPHA one: what does the opening page of this paper say regarding our method?
+key Return
+wait 3
+click 1180 800
+type ALPHA two: and what is on page 2?
+key Return
+wait 3
+
+# The first chat after two messages. The dropdown shows its title, the first
+# 60 characters of the first message: "ALPHA one: what does the opening page
+# of this paper say rega" (it may be cut short by the dropdown's width, but
+# never shows more, such as "regarding"). The view shows "ALPHA one: ..."
+# then "Answer 1 in this session. You said: ALPHA one: ...", then
+# "ALPHA two: and what is on page 2?" then "Answer 2 in this session. You
+# said: ALPHA two: ...", each reply with a grey cost line ($0.0010, 10 in,
+# 5 out). No red notice.
+shot alpha-chat
+
+key alt+n
+wait 2
+
+# New chat: the view is empty, the dropdown shows a new untitled entry (or
+# placeholder) selected. Input empty, Send enabled. No red notice.
+shot new-chat
+
+click 1180 800
+type BRAVO one: summarize the paper in one line
+key Return
+wait 3
+key alt+n
+wait 2
+click 1180 800
+type FAILFIRST one: this first reply fails #fail
+key Return
+wait 3
+
+# A chat whose first reply failed: the dropdown shows "FAILFIRST one: this
+# first reply fails #fail". The view shows that message, "Checking the
+# document..." and a red "Error: error_max_turns: the reply hit the turn
+# limit" (the expected notice). Send enabled.
+shot first-reply-failed
+
+key alt+n
+wait 2
+click 1180 800
+type DOOMED one: remember the word PLUM #doom
+key Return
+wait 3
+key alt+r
+wait 1
+
+# The Rename dialog over the window, its text field holding "DOOMED one:
+# remember the word PLUM #doom", with OK and Cancel.
+shot rename-dialog
+
+key ctrl+a
+type Doomed renamed
+key Return
+wait 2
+
+# Renamed: the dropdown reads "Doomed renamed". The view still shows
+# "DOOMED one: remember the word PLUM #doom" and "Answer 1 in this session.
+# You said: DOOMED one: ...". No dialog, no red notice.
+shot renamed
+
+click 1040 90
+wait 1
+
+# The dropdown's list is open over the pane with exactly four entries, newest
+# first: "Doomed renamed", "FAILFIRST one: this first reply fails #fail",
+# "BRAVO one: summarize the paper in one line", "ALPHA one: what does the
+# opening page of this paper say rega" (the first 60 characters only).
+shot list-open
+
+key Escape
+wait 1
+key Home Down Down
+wait 2
+
+# Switched to BRAVO (third entry) on the way through FAILFIRST: the dropdown
+# reads "BRAVO one: summarize the paper in one line", the view shows that
+# message and "Answer 1 in this session. You said: BRAVO one: ...", nothing
+# of the other chats. No red notice (a "chat is already open" error would be
+# a failure: these chats are open in this sidecar already).
+shot bravo-selected
+
+click 1180 800
+type BRAVO two: back in this chat
+key Return
+wait 3
+
+# BRAVO goes on in the same session: "BRAVO two: back in this chat" and
+# "Answer 2 in this session. You said: BRAVO two: back in this chat." under
+# the first exchange. No red notice ("chat is not open" would be a failure).
+shot bravo-continued
+
+key alt+n
+wait 2
+click 1180 800
+type CHARLIE one: this chat gets deleted
+key Return
+wait 3
+key alt+d
+wait 1
+
+# A confirmation dialog over the window asks whether to delete the chat and
+# names it ("CHARLIE one: this chat gets deleted"), with Yes and No buttons.
+shot delete-confirm
+
+key Escape
+wait 1
+
+# No: nothing deleted. The dropdown still reads "CHARLIE one: this chat gets
+# deleted" and the view shows its message and "Answer 1 ... CHARLIE one ...".
+shot delete-cancelled
+
+key alt+d
+wait 1
+key alt+y
+wait 2
+
+# Yes: CHARLIE is gone. The most recent chat left, BRAVO, is selected: the
+# dropdown reads "BRAVO one: summarize the paper in one line" and the view
+# shows both BRAVO exchanges. No red notice. tests/acceptance/m6.4.sh checks
+# that this shot exists; m6.4-check.py run1 checks that no CHARLIE entry or
+# transcript is left in proj/.reader.
+shot deleted
+
+click 1040 90
+wait 1
+
+# The list again: four entries, newest first: "BRAVO one: ...",
+# "Doomed renamed", "FAILFIRST one: ...", "ALPHA one: ..." (no CHARLIE).
+shot list-after-delete
+
+key Escape
+wait 1
+key ctrl+q
+wait 3

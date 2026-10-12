@@ -1,0 +1,192 @@
+# M6.4 acceptance, run 2 of 3: restart with the chats of run 1, select and
+# resume them, a chat with no session_id, a resume that fails and "Continue
+# in new chat", and a sidecar crash in the middle of a reply. Run through
+# tests/acceptance/m6.4.sh after run 1 (m6.4.steps), with the same HOME and
+# fixture; this run opens /tmp/agentic-reader-m6.4/proj/paper.pdf again with
+# a new fake sidecar log. Interface choices and the fake's replies are at the
+# top of m6.4.steps.
+#
+# State after run 1, newest first:
+#   BRAVO     "BRAVO one: summarize the paper in one line", 2 exchanges,
+#             session sess-<id>
+#   DOOMED    titled "Doomed renamed", 1 exchange, session
+#             sess-doomed-<id>, which the fake cannot resume: the first prompt
+#             after its resume fails with `error` process ("No conversation
+#             found with session ID: sess-doomed-...") and closes the chat
+#   FAILFIRST one user message, no reply, session_id null
+#   ALPHA     2 exchanges, session sess-<id>
+# Every selection below uses End, because each time the chat to open is the
+# last entry.
+#
+# A message ending "#crash" makes the fake print "Working on it" and exit
+# with status 3. SidecarClient restarts it about 1 s later and re-sends
+# open_project; the selected chat must then be resumed (M5.1 carried note).
+# m6.4-check.py run2 checks the order of new_chat/resume_chat/prompt in both
+# sidecar processes, the transcripts and session ids.
+wait 4
+
+# At start the newest chat, BRAVO, is selected and resumed: the dropdown
+# reads "BRAVO one: summarize the paper in one line", the view shows its
+# transcript from disk: "BRAVO one: ...", "Answer 1 in this session. You
+# said: BRAVO one: ...", "BRAVO two: back in this chat", "Answer 2 in this
+# session. You said: BRAVO two: ...". No red notice.
+shot restart-bravo
+
+click 1040 90
+wait 1
+
+# The list survived the restart, newest first: "BRAVO one: ...",
+# "Doomed renamed", "FAILFIRST one: this first reply fails #fail",
+# "ALPHA one: what does the opening page of this paper say rega".
+shot restart-list
+
+key Escape
+wait 1
+key End
+wait 2
+
+# ALPHA selected: the dropdown reads "ALPHA one: what does the opening page
+# of this paper say rega" (or as much as fits), the view shows its two
+# exchanges ("ALPHA one: ...", "Answer 1 ...", "ALPHA two: and what is on
+# page 2?", "Answer 2 ..."), nothing of BRAVO. No red notice.
+shot alpha-resumed
+
+click 1180 800
+type ALPHA three: what did I ask first?
+key Return
+wait 3
+
+# The follow-up goes to the resumed session: under the old exchanges,
+# "ALPHA three: what did I ask first?" and "Answer 3 in this session. You
+# said: ALPHA three: what did I ask first?. Earlier in this session you first
+# asked: ALPHA one: what does the opening page of this paper say regarding
+# our method?" with its cost line. "Answer 3" proves the same session.
+shot alpha-follow-up
+
+click 1040 90
+wait 1
+key Escape
+wait 1
+key End
+wait 2
+
+# FAILFIRST selected (it has no session_id): the dropdown reads "FAILFIRST
+# one: this first reply fails #fail", the view shows that one user message
+# and no reply. No red notice, no "cannot resume" mark, Send enabled.
+shot failfirst-reopened
+
+click 1180 800
+type FAILFIRST two: try again
+key Return
+wait 3
+
+# FAILFIRST works: "FAILFIRST two: try again" and "Answer 1 in this session.
+# You said: FAILFIRST two: try again." under the first message. No red
+# notice.
+shot failfirst-recovered
+
+click 1040 90
+wait 1
+key Escape
+wait 1
+key End
+wait 2
+
+# DOOMED selected: the dropdown reads "Doomed renamed", the view shows
+# "DOOMED one: remember the word PLUM #doom" and "Answer 1 in this session.
+# You said: DOOMED one: ...". No red notice yet (the resume is only known to
+# have failed at the first prompt).
+shot doomed-selected
+
+click 1180 800
+type DOOMED two: what word did I ask you to remember?
+key Return
+wait 3
+
+# The resume failed. The transcript stays: "DOOMED one: ...", its answer,
+# and "DOOMED two: what word did I ask you to remember?". The chat is marked
+# "cannot resume" (in a notice in the view and/or the dropdown entry), and a
+# "Continue in new chat" button shows in the chat pane. The view does not
+# say "The chat was reopened" and no reply follows. The input is still at
+# the bottom of the pane.
+shot cannot-resume
+
+key alt+c
+wait 3
+click 1180 800
+type NEW one: continue where we left off
+key Return
+wait 3
+
+# Continued in a new chat: the dropdown shows the new chat selected (not
+# "Doomed renamed"). The view shows "NEW one: continue where we left off" and
+# "Answer <n> in this session. You said: NEW one: continue where we left
+# off." (n is 1, or 2 when the context prompt went out at once and its reply
+# is shown above). The view does not show DOOMED's messages as this chat's
+# own messages, except as part of a context prompt the app chose to show.
+# No red notice.
+shot continued
+
+click 1040 90
+wait 1
+
+# The list, newest first: the new chat, "Doomed renamed" (possibly marked
+# cannot resume), "FAILFIRST one: ...", "ALPHA one: ...", "BRAVO one: ...".
+shot list-after-continue
+
+key Escape
+wait 1
+key End
+wait 2
+
+# BRAVO selected again (it was resumed at start in this sidecar, so nothing
+# is sent): its two exchanges show. No red notice.
+shot bravo-before-crash
+
+click 1180 800
+type BRAVO three: this reply crashes the agent #crash
+key Return
+wait 6
+
+# The sidecar crashed in the middle of the reply and was restarted: under
+# "BRAVO three: this reply crashes the agent #crash", "Working on it" and the
+# red "Agent stopped, restarting..." notice with "Send your message again."
+# (the expected notice). The status bar's right field reads "Assistant
+# ready" or a restart message, not "unavailable". BRAVO is still selected,
+# its earlier exchanges still show.
+shot after-crash
+
+click 1180 800
+type BRAVO four: are you still there?
+key Return
+wait 3
+
+# BRAVO was resumed in the restarted sidecar: "BRAVO four: are you still
+# there?" and "Answer 3 in this session. You said: BRAVO four: are you still
+# there?. Earlier in this session you first asked: BRAVO one: summarize the
+# paper in one line." No new red notice ("chat is not open" would be a
+# failure).
+shot bravo-after-restart
+
+click 1040 90
+wait 1
+key Escape
+wait 1
+key End
+wait 2
+click 1180 800
+type ALPHA four: after the restart
+key Return
+wait 3
+
+# ALPHA, never opened in the restarted sidecar, was resumed when selected:
+# the view shows its transcript ending with its three earlier exchanges (at
+# least the newest, "ALPHA three: ..." and its answer, when scrolled to the
+# bottom), then "ALPHA four: after the restart"
+# and "Answer 4 in this session. You said: ALPHA four: after the restart.
+# Earlier in this session you first asked: ALPHA one: ...". No red notice.
+# tests/acceptance/m6.4.sh checks that this shot exists.
+shot alpha-after-restart
+
+key ctrl+q
+wait 3

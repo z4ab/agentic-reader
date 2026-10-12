@@ -39,7 +39,8 @@ struct ChatMessage
 // A project folder: the PDFs under it and its .reader/ state.
 //
 // Relative paths use '/' separators everywhere (pdfs(), openFile(), files()).
-// Every write goes to a "*.tmp" file first and is renamed into place.
+// project.json is written to a "*.tmp" file first and renamed into place.
+// Transcripts are appended to in place.
 class Project
 {
 public:
@@ -81,6 +82,11 @@ public:
     // read-only project, a bad id, or an IO failure.
     bool appendMessage(const std::string& chatId, const ChatMessage& message,
                        std::string& error) const;
+
+    // Deletes .reader/chats/<chatId>.jsonl, if any, and nothing else. Returns
+    // false and sets `error` on a read-only project, a bad id, or an IO
+    // failure.
+    bool removeTranscript(const std::string& chatId, std::string& error) const;
 
     // The messages of one chat in file order. Empty when the transcript does
     // not exist. Lines that are not a JSON object are skipped.

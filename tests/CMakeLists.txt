@@ -8,6 +8,14 @@ if(NOT WIN32)
     add_test(NAME branding COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_branding.sh ${PROJECT_SOURCE_DIR})
 endif()
 
+add_executable(test_chat_list test_chat_list.cpp)
+target_link_libraries(test_chat_list PRIVATE doctest::doctest nlohmann_json::nlohmann_json reader_core)
+add_test(NAME chat_list COMMAND test_chat_list)
+
+add_executable(test_chat_list_attach test_chat_list_attach.cpp)
+target_link_libraries(test_chat_list_attach PRIVATE doctest::doctest nlohmann_json::nlohmann_json reader_core)
+add_test(NAME chat_list_attach COMMAND test_chat_list_attach)
+
 add_executable(test_error_ux test_error_ux.cpp)
 target_link_libraries(test_error_ux PRIVATE doctest::doctest reader_core)
 add_test(NAME error_ux COMMAND test_error_ux)

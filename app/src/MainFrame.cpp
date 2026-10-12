@@ -219,6 +219,8 @@ void MainFrame::openProjectFolder(const fs::path& root, bool save)
 void MainFrame::enterProject(const fs::path& root, bool save)
 {
     saveProjectState();
+    // The chat pane lets go of the project before it is closed.
+    m_chat->closeProject();
     m_project.reset();
     m_projectRoot = root;
 
@@ -239,9 +241,9 @@ void MainFrame::enterProject(const fs::path& root, bool save)
     }
 
     m_projectPanel->setProject(root, m_project != nullptr);
-    // A new project gets a new chat. An unsaved project's chats stay in
-    // memory only (M6.4 persists chats through m_project).
-    m_chat->openProject(toWx(root).utf8_string());
+    // The chat pane shows the project's chats. An unsaved project's chats
+    // stay in memory only.
+    m_chat->openProject(toWx(root).utf8_string(), m_project.get());
     if (m_project)
         addRecentProject();
 
@@ -282,7 +284,8 @@ void MainFrame::saveAsProject()
                      "Cannot Save Project", wxOK | wxICON_ERROR, this);
         return;
     }
-    // The chat goes on. M6.4 starts persisting it from here.
+    // The chats go on and are saved from here.
+    m_chat->attachProject(m_project.get());
     m_projectPanel->setSaved(true);
     addRecentProject();
     m_project->setOpenFile(relativeTo(m_pdfView->filePath(), m_projectRoot));

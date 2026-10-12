@@ -1,0 +1,69 @@
+# M6.4 acceptance, run 3 of 3: an unsaved project has a chat list too, but
+# its chats live in memory only. Run through tests/acceptance/m6.4.sh after
+# runs 1 and 2, with the same HOME; this run opens
+# /tmp/agentic-reader-m6.4/loose/single.pdf, whose folder has no .reader/, so
+# it opens as an unsaved project. Interface choices and the fake's replies
+# are at the top of m6.4.steps. m6.4-check.py run3 checks that no .reader/
+# appeared in loose/, that no file under loose/, the scratch HOME or proj/
+# holds "LOOSE" or "Loose renamed" (the app's sidecar.log aside), and that
+# the fake saw two new_chat, no resume_chat and the two prompts.
+wait 4
+
+# Unsaved project: the project header says "Unsaved project" with the "Save
+# as project" button, the PDF pane shows single.pdf ("Page One"). The chat
+# pane has the same chat list row (dropdown with one new, untitled chat or a
+# placeholder, then "New chat", "Rename", "Delete"), an empty view and the
+# input. None of run 1's chats (ALPHA, BRAVO, ...) is listed. No red notice.
+shot unsaved-start
+
+click 1180 800
+type LOOSE one: first unsaved chat
+key Return
+wait 3
+key alt+n
+wait 2
+click 1180 800
+type LOOSE two: second unsaved chat
+key Return
+wait 3
+click 1040 90
+wait 1
+
+# The list of the unsaved project, newest first: "LOOSE two: second unsaved
+# chat", "LOOSE one: first unsaved chat". Nothing else.
+shot unsaved-list
+
+key Escape
+wait 1
+key End
+wait 2
+
+# LOOSE one selected, from memory: the dropdown reads "LOOSE one: first
+# unsaved chat", the view shows that message and "Answer 1 in this session.
+# You said: LOOSE one: first unsaved chat." and nothing of LOOSE two. No red
+# notice.
+shot unsaved-switched
+
+key alt+r
+wait 1
+key ctrl+a
+type Loose renamed
+key Return
+wait 2
+
+# Renamed in memory: the dropdown reads "Loose renamed", the view still
+# shows LOOSE one's exchange.
+shot unsaved-renamed
+
+key alt+d
+wait 1
+key alt+y
+wait 2
+
+# Deleted after the confirmation: "Loose renamed" is gone, LOOSE two is
+# selected (the dropdown reads "LOOSE two: second unsaved chat", the view
+# shows its exchange). tests/acceptance/m6.4.sh checks that this shot exists.
+shot unsaved-deleted
+
+key ctrl+q
+wait 3

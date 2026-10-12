@@ -326,28 +326,54 @@ bool Project::appendMessage(const std::string& chatId, const ChatMessage& messag
         line["cost_usd"] = *message.costUsd;
     }
 
-    // Copy the transcript to the .tmp file, append there, then rename over it.
+    // A plain append, so the cost of a message does not grow with the
+    // transcript. A crash can leave a torn last line, which transcript()
+    // skips: the next message starts on a line of its own.
     const fs::path file = dir / (chatId + ".jsonl");
-    const fs::path tmp = tmpPathFor(file);
-    if (fs::exists(file, ec)) {
-        fs::copy_file(file, tmp, fs::copy_options::overwrite_existing, ec);
-        if (ec) {
-            error = "cannot copy " + file.string() + ": " + ec.message();
-            fs::remove(tmp, ec);
-            return false;
-        }
-    }
+    // A stale .tmp from the copy-and-rename appends of earlier versions is
+    // never part of the transcript.
+    fs::remove(tmpPathFor(file), ec);
+    bool tornLastLine = false;
     {
-        std::ofstream out(tmp, std::ios::binary | std::ios::app);
-        out << line.dump() << '\n';
-        out.close();
-        if (!out) {
-            error = "cannot write " + tmp.string();
-            fs::remove(tmp, ec);
-            return false;
+        std::ifstream in(file, std::ios::binary | std::ios::ate);
+        if (in && in.tellg() > 0) {
+            in.seekg(-1, std::ios::end);
+            char last = '\n';
+            in.get(last);
+            tornLastLine = last != '\n';
         }
     }
-    return commitTmp(tmp, file, error);
+    std::ofstream out(file, std::ios::binary | std::ios::app);
+    if (tornLastLine)
+        out << '\n';
+    out << line.dump() << '\n';
+    out.close();
+    if (!out) {
+        error = "cannot write " + file.string();
+        return false;
+    }
+    return true;
+}
+
+bool Project::removeTranscript(const std::string& chatId, std::string& error) const
+{
+    if (m_readOnly) {
+        error = "project is read-only";
+        return false;
+    }
+    if (!validChatId(chatId)) {
+        error = "invalid chat id: " + chatId;
+        return false;
+    }
+    const fs::path file = m_root / kReaderDir / kChatsDir / (chatId + ".jsonl");
+    std::error_code ec;
+    fs::remove(tmpPathFor(file), ec);
+    fs::remove(file, ec);
+    if (ec) {
+        error = "cannot delete " + file.string() + ": " + ec.message();
+        return false;
+    }
+    return true;
 }
 
 std::vector<ChatMessage> Project::transcript(const std::string& chatId) const

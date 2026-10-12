@@ -13,6 +13,7 @@ add_library(reader_core STATIC
     src/MainFrame.cpp
     src/agent/Protocol.cpp
     src/agent/SidecarClient.cpp
+    src/chat/ChatList.cpp
     src/chat/ChatPanel.cpp
     src/chat/Markdown.cpp
     src/chat/PermissionDialog.cpp

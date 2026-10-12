@@ -3,6 +3,8 @@
 #
 #   P=$(mktemp -d)                     # scratch project folder
 #   H=$(mktemp -d)                     # isolated HOME for config and logs
+#   mkdir -p "$H/.config"              # skip the M7.3 first-run banner
+#   printf '[Agent]\nUseLocalLogin=1\n' >"$H/.config/agentic-reader.conf"
 #   cp tests/data/sample.pdf "$P/"
 #   READER_SIDECAR_CMD="sh $PWD/tests/acceptance/m5.4-fake-sidecar.sh" \
 #     scripts/shot.sh -o <repo>/.verify/m5.4/<impl|review|tester> \
