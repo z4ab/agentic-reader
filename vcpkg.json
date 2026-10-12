@@ -7,6 +7,11 @@
     "md4c",
     "nlohmann-json",
     "poppler",
-    "wxwidgets"
+    {
+      "name": "wxwidgets",
+      "features": [
+        "secretstore"
+      ]
+    }
   ]
 }

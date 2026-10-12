@@ -5,7 +5,9 @@
 
 #include <memory>
 
+class KeyStore;
 class PdfView;
+class Settings;
 class SidecarClient;
 class wxCloseEvent;
 class wxCommandEvent;
@@ -29,10 +31,13 @@ private:
 
     void onQuit(wxCommandEvent& event);
     void onAbout(wxCommandEvent& event);
+    void onPreferences(wxCommandEvent& event);
     void onClose(wxCloseEvent& event);
     void onSidecarReady(wxThreadEvent& event);
     void onSidecarDown(wxThreadEvent& event);
 
     PdfView* m_pdfView = nullptr;
+    std::unique_ptr<KeyStore> m_keyStore;
+    std::unique_ptr<Settings> m_settings;
     std::unique_ptr<SidecarClient> m_sidecar;
 };

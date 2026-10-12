@@ -59,13 +59,19 @@ std::string appLogLine(const wxString& text)
     return (wxDateTime::Now().Format("%Y-%m-%d %H:%M:%S") + " [app] " + text).utf8_string();
 }
 
-// The sidecar's environment. For now the app's own environment passes through.
+// The sidecar's environment: the app's own environment with `changes` applied.
 // M7.2 builds it from Settings instead: it strips stray credentials from this
 // map, then adds the API key (or nothing for the local login) and READER_MODEL.
-wxExecuteEnv sidecarEnvironment()
+wxExecuteEnv sidecarEnvironment(const std::map<wxString, std::optional<wxString>>& changes)
 {
     wxExecuteEnv env;
     wxGetEnvMap(&env.env);
+    for (const auto& [name, value] : changes) {
+        if (value)
+            env.env[name] = *value;
+        else
+            env.env.erase(name);
+    }
     return env;
 }
 
@@ -283,9 +289,19 @@ wxString SidecarClient::locateCommand()
     return wxString();
 }
 
-wxString SidecarClient::logPath()
+void SidecarClient::setEnvironment(std::map<wxString, std::optional<wxString>> changes)
 {
-    wxFileName path(wxStandardPaths::Get().GetUserDataDir(), "sidecar.log");
+    m_envChanges = std::move(changes);
+}
+
+void SidecarClient::setLogName(const wxString& name)
+{
+    m_logName = name;
+}
+
+wxString SidecarClient::logPath(const wxString& name)
+{
+    wxFileName path(wxStandardPaths::Get().GetUserDataDir(), name);
     path.AppendDir("logs");
     return path.GetFullPath();
 }
@@ -296,7 +312,7 @@ bool SidecarClient::start()
     if (m_state != State::Stopped)
         return true;
 
-    const wxFileName path(logPath());
+    const wxFileName path(logPath(m_logName));
     path.Mkdir(wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL);
     {
         std::lock_guard lock(m_log->mutex);
@@ -327,7 +343,7 @@ void SidecarClient::spawn()
 
     // wx may report an immediate exit from inside wxExecute, which retires
     // `r` (still alive: reap() runs later).
-    wxExecuteEnv env = sidecarEnvironment();
+    wxExecuteEnv env = sidecarEnvironment(m_envChanges);
     const long pid = wxExecute(m_command, wxEXEC_ASYNC | wxEXEC_HIDE_CONSOLE, r->process, &env);
     if (pid == 0) {
         delete r->process;

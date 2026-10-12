@@ -7,6 +7,7 @@
 #include <wx/timer.h>
 
 #include <chrono>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -63,8 +64,16 @@ public:
 
     bool isReady() const { return m_state == State::Ready; }
 
-    // The sidecar log file: <user data dir>/logs/sidecar.log.
-    static wxString logPath();
+    // Changes to the app's environment for the sidecar, applied at every
+    // spawn. A std::nullopt value removes the variable. Call before start().
+    void setEnvironment(std::map<wxString, std::optional<wxString>> changes);
+
+    // The log file name under <user data dir>/logs. Default "sidecar.log".
+    // Call before start().
+    void setLogName(const wxString& name);
+
+    // A sidecar log file: <user data dir>/logs/<name>.
+    static wxString logPath(const wxString& name = "sidecar.log");
 
 private:
     enum class State
@@ -98,6 +107,8 @@ private:
 
     wxEvtHandler* m_sink;
     wxString m_command;
+    std::map<wxString, std::optional<wxString>> m_envChanges;
+    wxString m_logName = "sidecar.log";
     State m_state = State::Stopped;
 
     std::shared_ptr<LogFile> m_log;

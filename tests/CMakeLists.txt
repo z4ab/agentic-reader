@@ -34,6 +34,10 @@ target_compile_definitions(test_protocol_cpp PRIVATE PROTOCOL_MD_PATH="${PROJECT
 target_link_libraries(test_protocol_cpp PRIVATE doctest::doctest nlohmann_json::nlohmann_json reader_core)
 add_test(NAME protocol_cpp COMMAND test_protocol_cpp)
 
+add_executable(test_settings test_settings.cpp)
+target_link_libraries(test_settings PRIVATE doctest::doctest reader_core)
+add_test(NAME settings COMMAND test_settings)
+
 # The fake sidecar is a POSIX shell script.
 if(NOT WIN32)
     add_executable(test_sidecar_client test_sidecar_client.cpp)

@@ -1,0 +1,134 @@
+# M7.1 acceptance: the Preferences dialog, driven by keyboard only.
+#
+# Run from the worktree root with an isolated HOME (so wxConfig and the logs
+# never touch the real home), an unreachable session bus (so the run never
+# reaches the user's keyring and the key store is reliably unavailable), and
+# the fake sidecar (so "Test key" never touches the network):
+#
+#   H=$(mktemp -d)
+#   O=<repo>/.verify/m7.1/<impl|review|tester>
+#   READER_SIDECAR_CMD="$PWD/tests/acceptance/m7.1-fake-sidecar.sh" \
+#     scripts/shot.sh -o "$O" -s tests/acceptance/m7.1.steps -- \
+#     env HOME="$H" DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent \
+#     ./build/app/agentic-reader
+#   grep -rl claude-test-model "$H"            # must list the wxConfig file
+#   tests/acceptance/m7.1-grep.sh "$H" "$O"    # must exit 0
+#
+# The first grep proves the settings were written, so the second grep is not
+# vacuous. Pass: shot.sh exits 0, every shot matches its comment, both greps
+# behave as stated.
+#
+# The fake sidecar (tests/acceptance/m7.1-fake-sidecar.sh) answers `prompt`
+# with error kind `auth` when ANTHROPIC_API_KEY reached it, `internal` when
+# it did not, `no_project` for a new_chat before open_project, and
+# `unknown_chat` for a prompt to a chat it never started.
+#
+# Fake key, never a real one: sk-ant-test-FAKEKEY0123456789
+#
+# Assumptions the steps rely on (the spec is silent):
+#   - The menu bar reads File, Edit, Help. "&Edit" has mnemonic E and its
+#     Preferences item (wxID_PREFERENCES) has mnemonic P.
+#   - The dialog opens with keyboard focus in the API key field.
+#   - Tab order follows spec item 3: key field, Show, Test key, model field,
+#     dev checkbox. Show is a check box or toggle button, so Space flips it.
+#   - The key field stays editable when the key store is unavailable, so Show
+#     and Test key still work. The key is just not saved.
+#   - "Test key" reports its result inside the dialog (a status line), not in
+#     a separate message box.
+#   - OK is the default button: Return in the model field accepts the dialog.
+#     OK saves the model and the dev flag. With no key store it saves no key
+#     and opens no extra message box (the dialog already showed why).
+#   - Escape cancels the dialog.
+wait 2
+
+# Main window with the menu bar open on Edit: "Edit" sits between "File" and
+# "Help", and its menu shows a "Preferences" item.
+key alt+e
+wait 1
+shot edit-menu
+
+key p
+wait 2
+
+# The Preferences dialog is open over the main window and shows:
+#   - an empty API key field with a "Show" toggle (off) and a "Test key" button,
+#   - an empty model field (empty means the SDK default),
+#   - an unchecked "Use my local Claude Code login (developer)" check box with
+#     a one-line warning that it is for personal use only,
+#   - OK and Cancel buttons.
+# Key store unavailable (expected for this run): a visible message says the
+# key cannot be stored securely and why (for example, no secret service), and
+# nothing suggests a plain-text fallback.
+# Key store available (a run with a working secret service): no such message.
+shot dialog-open
+
+type sk-ant-test-FAKEKEY0123456789
+wait 1
+
+# The key field holds 29 mask characters (dots or asterisks). No part of
+# "sk-ant-test-FAKEKEY0123456789" is readable anywhere on screen.
+shot key-masked
+
+# Tab to Show and turn it on.
+key Tab
+key space
+wait 1
+
+# Show is on and the key field shows the plain text
+# "sk-ant-test-FAKEKEY0123456789". Everything else is unchanged.
+shot key-shown
+
+# Tab to Test key and press it. The fake sidecar answers with an auth error.
+key Tab
+key space
+wait 4
+
+# The dialog reports that the test failed with error kind "auth" (the word
+# "auth" or an equivalent invalid-key message naming the auth kind is
+# visible). It must not report "internal" (the key did not reach the sidecar),
+# "no_project" or "unknown_chat" (the wrong message order), and must not say
+# OK. The status line does not contain the key. The dialog is still open.
+shot test-key-auth
+
+# Tab to the model field and type a model, then Tab to the dev check box and
+# check it.
+key Tab
+type claude-test-model
+key Tab
+key space
+wait 1
+
+# The model field reads "claude-test-model" and the dev check box is checked.
+# Its one-line personal-use warning is still visible. The key field and the
+# Test key result are unchanged.
+shot model-and-dev
+
+# Back to the model field and press Return to accept the dialog (OK).
+key shift+Tab
+key Return
+wait 2
+
+# The dialog is closed. The main window is back with no other dialog or
+# message box open.
+shot saved
+
+# Reopen Preferences the same way.
+key alt+e
+wait 1
+key p
+wait 2
+
+# The reopened dialog shows the saved settings: model "claude-test-model" and
+# the dev check box checked.
+# Key store unavailable (expected for this run): the key field is empty
+# because nothing stored the key, and the unavailable message shows again.
+# Key store available: the key field holds the saved key, masked (29 mask
+# characters), and Show is off.
+shot reopened
+
+# Cancel. The app keeps running.
+key Escape
+wait 1
+
+# The dialog is closed and the main window is back.
+shot closed

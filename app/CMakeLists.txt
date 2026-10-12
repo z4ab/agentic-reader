@@ -18,6 +18,9 @@ add_library(reader_core STATIC
     src/pdf/PdfView.cpp
     src/pdf/RenderWorker.cpp
     src/project/Project.cpp
+    src/settings/KeyTester.cpp
+    src/settings/Settings.cpp
+    src/settings/SettingsDialog.cpp
 )
 target_include_directories(reader_core PUBLIC src)
 target_include_directories(reader_core SYSTEM PUBLIC ${POPPLER_CPP_INCLUDE_DIR})

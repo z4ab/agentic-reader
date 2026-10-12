@@ -2,8 +2,11 @@
 
 #include "agent/SidecarClient.h"
 #include "pdf/PdfView.h"
+#include "settings/Settings.h"
+#include "settings/SettingsDialog.h"
 
 #include <wx/aboutdlg.h>
+#include <wx/config.h>
 #include <wx/log.h>
 #include <wx/menu.h>
 #include <wx/panel.h>
@@ -19,7 +22,9 @@ constexpr int kMinPaneWidth = 100;
 } // namespace
 
 MainFrame::MainFrame(const wxString& pdfPath)
-    : wxFrame(nullptr, wxID_ANY, "Agentic Reader", wxDefaultPosition, wxSize(1400, 900))
+    : wxFrame(nullptr, wxID_ANY, "Agentic Reader", wxDefaultPosition, wxSize(1400, 900)),
+      m_keyStore(makeSystemKeyStore()),
+      m_settings(std::make_unique<Settings>(*wxConfigBase::Get(), *m_keyStore))
 {
     buildMenuBar();
     buildLayout();
@@ -54,16 +59,22 @@ void MainFrame::buildMenuBar()
     auto* fileMenu = new wxMenu();
     fileMenu->Append(wxID_EXIT, "&Quit\tCtrl+Q");
 
+    // On macOS wx moves wxID_PREFERENCES to the app menu.
+    auto* editMenu = new wxMenu();
+    editMenu->Append(wxID_PREFERENCES, "&Preferences...");
+
     auto* helpMenu = new wxMenu();
     helpMenu->Append(wxID_ABOUT, "&About");
 
     auto* menuBar = new wxMenuBar();
     menuBar->Append(fileMenu, "&File");
+    menuBar->Append(editMenu, "&Edit");
     menuBar->Append(helpMenu, "&Help");
     SetMenuBar(menuBar);
 
     Bind(wxEVT_MENU, &MainFrame::onQuit, this, wxID_EXIT);
     Bind(wxEVT_MENU, &MainFrame::onAbout, this, wxID_ABOUT);
+    Bind(wxEVT_MENU, &MainFrame::onPreferences, this, wxID_PREFERENCES);
 }
 
 void MainFrame::buildLayout()
@@ -120,6 +131,12 @@ void MainFrame::onSidecarReady(wxThreadEvent& /*event*/)
 void MainFrame::onSidecarDown(wxThreadEvent& /*event*/)
 {
     SetStatusText("Assistant stopped, restarting...");
+}
+
+void MainFrame::onPreferences(wxCommandEvent& /*event*/)
+{
+    SettingsDialog dialog(this, *m_settings);
+    dialog.ShowModal();
 }
 
 void MainFrame::onAbout(wxCommandEvent& /*event*/)
