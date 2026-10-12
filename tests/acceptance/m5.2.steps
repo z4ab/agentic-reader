@@ -1,0 +1,150 @@
+# M5.2 acceptance: the chat pane against a fake sidecar (no Claude calls).
+# Run from the worktree root with:
+#   READER_SIDECAR_CMD="sh $PWD/tests/data/fake_sidecar_chat.sh" \
+#   scripts/shot.sh -o <repo>/.verify/m5.2/<impl|review|tester> -s tests/acceptance/m5.2.steps \
+#     -- ./build/app/agentic-reader tests/data/sample.pdf
+# clean-env.sh keeps READER_* variables, so the app starts the fake sidecar.
+# tests/data/fake_sidecar_chat.sh documents what the fake replies. In short:
+#   - A normal prompt streams 18 Markdown deltas, one every 0.5 s (about 9.5 s
+#     in total): "## Attention in brief", a "**three**" sentence, a 3-item
+#     bullet list, a Python code block, inline `d_k`, a link "the paper", and a
+#     last italic line "Project folder: <path from open_project>". It ends with
+#     `result`: cost_usd 0.0123, input_tokens 1234, output_tokens 56.
+#   - Stop (interrupt) ends the reply before its next delta with `result`:
+#     cost_usd 0.0042, input_tokens 1234, output_tokens 12.
+#   - A prompt containing "fail" streams "Checking the document..." and then
+#     an `error` (kind internal, "simulated failure from the fake sidecar").
+#   - new_chat before open_project gets an `error` no_project, and a prompt
+#     for a chat that was never started gets `error` unknown_chat. Either one
+#     shows up as a red notice in the shots below, which is a failure.
+#
+# Layout these coordinates assume (1400x900 window at the screen origin, no
+# window manager): the chat pane is the right pane, x 980..1400. Top to bottom
+# it holds the message view, the input (at least 40 px tall), and one row of
+# buttons, right-aligned, Send then Stop, each at least wxButton's default
+# width (about 80 px), with the row's bottom edge within 10 px of the status
+# bar, which starts at y 876. So Stop is at about (1355, 850) and the input at
+# about (1180, 800).
+# The message view covers (1190, 300).
+wait 3
+
+# Whole window: page 1 of sample.pdf in the center pane. Right pane: an empty
+# message view, an empty input below it, and Send (enabled) then Stop (greyed
+# out) under the input. Status bar reads "Assistant ready". No red notice.
+shot initial
+
+click 1180 800
+type Summarize this paper
+key Return
+wait 2.5
+
+# Mid-stream. The message view shows the user message "Summarize this paper"
+# as plain text, then the start of the reply rendered as Markdown: the heading
+# "Attention in brief" in large bold type and the "three main points" line,
+# with at most part of the bullet list. No code block and no "Project folder"
+# line yet. The input is empty. Send is greyed out and Stop is enabled.
+shot mid-stream
+
+wait 9
+
+# Finished. The whole reply is rendered as Markdown, not raw syntax: heading
+# "Attention in brief" (no "##"), "three" in bold, a 3-item bullet list whose
+# second item reads "Multi-head attention runs several heads in parallel" in
+# one word ("attention", joined across two deltas) with "several" in italics,
+# the Python code block in a monospace font with its indentation kept, "d_k"
+# in monospace, "the paper" as a link (blue or underlined) with no "[...]()"
+# visible, and "Project folder: <abs path>/tests/data" in italics, where the
+# path is absolute and ends in /tests/data (the folder of the open PDF).
+# Directly under the reply, small grey text shows the cost (0.0123, in any
+# sensible rounding such as $0.0123 or $0.012) and the tokens (1234 in,
+# 56 out). The view is scrolled to the bottom. Send is enabled, Stop greyed out.
+shot finished
+
+click 1180 800
+type Summarize it again
+key Return
+wait 2.5
+click 1355 850
+wait 2
+
+# Stopped. A second user message "Summarize it again" and, under it, a partial
+# reply: the heading and at most the first two bullets, with no code block and
+# no "Project folder" line. It ends with the grey cost line for the stopped
+# reply (cost 0.0042, tokens 1234 in, 12 out). The first reply's grey cost line
+# (0.0123) is unchanged above it, if still in view. View scrolled to the
+# bottom. Send is enabled and Stop is greyed out again. No red notice.
+shot stopped
+
+click 1180 800
+type Please fail: <b>tags</b> & more
+key shift+Return
+type second line
+wait 0.5
+
+# Shift+Enter inserted a newline: the input holds two lines,
+# "Please fail: <b>tags</b> & more" and "second line" below it. Nothing was
+# sent: no new user message in the view, which still ends with the stopped
+# reply. Send is enabled.
+shot shift-enter-newline
+
+key Return
+wait 2.5
+
+# Error. The new user message shows literally as two lines,
+# "Please fail: <b>tags</b> & more" with the angle brackets and "&" visible
+# and "tags" not bold, then "second line". Under it the reply text
+# "Checking the document..." and a red inline notice containing
+# "simulated failure from the fake sidecar". No grey cost line for this reply.
+# The input is empty. Send is enabled and Stop greyed out.
+shot error-notice
+
+click 1180 800
+type Summarize once more
+key Return
+wait 1.5
+click 1190 300 4
+click 1190 300 4
+click 1190 300 4
+click 1190 300 4
+click 1190 300 4
+click 1190 300 4
+click 1190 300 4
+click 1190 300 4
+click 1190 300 4
+click 1190 300 4
+wait 1
+
+# Scrolled up while streaming. The user scrolled the message view up, so it
+# stays there although deltas keep arriving: it shows an earlier part of the
+# conversation (such as the first reply or the top of the view), not the
+# newest reply growing at the bottom. Stop is enabled, so the reply is still
+# running.
+shot scrolled-up-mid-stream
+
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+click 1190 300 5
+wait 8
+
+# Back at the bottom after scrolling down. The view shows the end of the
+# fourth reply: the italic "Project folder" line and the grey cost line
+# (0.0123, 1234 in, 56 out) under it, with nothing cut off below. Send is
+# enabled and Stop greyed out.
+shot back-at-bottom

@@ -5,6 +5,7 @@
 
 #include <memory>
 
+class ChatPanel;
 class KeyStore;
 class PdfView;
 class Settings;
@@ -35,9 +36,11 @@ private:
     void onClose(wxCloseEvent& event);
     void onSidecarReady(wxThreadEvent& event);
     void onSidecarDown(wxThreadEvent& event);
+    void onSidecarMessage(wxThreadEvent& event);
 
     PdfView* m_pdfView = nullptr;
     std::unique_ptr<KeyStore> m_keyStore;
     std::unique_ptr<Settings> m_settings;
+    ChatPanel* m_chat = nullptr;
     std::unique_ptr<SidecarClient> m_sidecar;
 };

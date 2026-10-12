@@ -1,12 +1,14 @@
 #include "MainFrame.h"
 
 #include "agent/SidecarClient.h"
+#include "chat/ChatPanel.h"
 #include "pdf/PdfView.h"
 #include "settings/Settings.h"
 #include "settings/SettingsDialog.h"
 
 #include <wx/aboutdlg.h>
 #include <wx/config.h>
+#include <wx/filename.h>
 #include <wx/log.h>
 #include <wx/menu.h>
 #include <wx/panel.h>
@@ -26,6 +28,8 @@ MainFrame::MainFrame(const wxString& pdfPath)
       m_keyStore(makeSystemKeyStore()),
       m_settings(std::make_unique<Settings>(*wxConfigBase::Get(), *m_keyStore))
 {
+    // The chat pane needs the client, so it exists before the layout.
+    m_sidecar = std::make_unique<SidecarClient>(this);
     buildMenuBar();
     buildLayout();
     CreateStatusBar();
@@ -36,8 +40,14 @@ MainFrame::MainFrame(const wxString& pdfPath)
     // Temporary until the project panel opens files (M6).
     if (!pdfPath.empty()) {
         std::string error;
-        if (!m_pdfView->openFile(pdfPath.utf8_string(), error))
+        if (m_pdfView->openFile(pdfPath.utf8_string(), error)) {
+            // The PDF's folder is the project until M6 adds real projects.
+            wxFileName file(pdfPath);
+            file.MakeAbsolute();
+            m_chat->openProject(file.GetPath().utf8_string());
+        } else {
             wxLogError("Cannot open %s: %s", pdfPath, error);
+        }
     }
 }
 
@@ -45,13 +55,15 @@ MainFrame::~MainFrame() = default;
 
 void MainFrame::startSidecar()
 {
-    m_sidecar = std::make_unique<SidecarClient>(this);
     Bind(EVT_SIDECAR_READY, &MainFrame::onSidecarReady, this);
     Bind(EVT_SIDECAR_DOWN, &MainFrame::onSidecarDown, this);
-    if (m_sidecar->start())
+    Bind(EVT_SIDECAR_MESSAGE, &MainFrame::onSidecarMessage, this);
+    if (m_sidecar->start()) {
         SetStatusText("Starting assistant...");
-    else
+    } else {
         SetStatusText("Assistant unavailable: reader-sidecar not found");
+        m_chat->setUnavailable("The assistant is unavailable: reader-sidecar was not found.");
+    }
 }
 
 void MainFrame::buildMenuBar()
@@ -89,13 +101,13 @@ void MainFrame::buildLayout()
 
     wxPanel* left = makePane(outer, "Project");
     m_pdfView = new PdfView(inner);
-    wxPanel* right = makePane(inner, "Chat");
+    m_chat = new ChatPanel(inner, *m_sidecar);
 
     // Resizing the window grows or shrinks only the center pane.
     outer->SetSashGravity(0.0);
     inner->SetSashGravity(1.0);
 
-    inner->SplitVertically(m_pdfView, right, -kRightPaneWidth);
+    inner->SplitVertically(m_pdfView, m_chat, -kRightPaneWidth);
     outer->SplitVertically(left, inner, kLeftPaneWidth);
 }
 
@@ -128,9 +140,15 @@ void MainFrame::onSidecarReady(wxThreadEvent& /*event*/)
     SetStatusText("Assistant ready");
 }
 
-void MainFrame::onSidecarDown(wxThreadEvent& /*event*/)
+void MainFrame::onSidecarDown(wxThreadEvent& event)
 {
     SetStatusText("Assistant stopped, restarting...");
+    m_chat->onSidecarDown(event.GetString());
+}
+
+void MainFrame::onSidecarMessage(wxThreadEvent& event)
+{
+    m_chat->onSidecarMessage(event.GetPayload<protocol::Outbound>());
 }
 
 void MainFrame::onPreferences(wxCommandEvent& /*event*/)
