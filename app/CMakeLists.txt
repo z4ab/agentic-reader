@@ -16,6 +16,7 @@ add_library(reader_core STATIC
     src/chat/ChatPanel.cpp
     src/chat/Markdown.cpp
     src/chat/PermissionDialog.cpp
+    src/chat/SetupBanner.cpp
     src/chat/ToolFormat.cpp
     src/pdf/PageCache.cpp
     src/pdf/PageLayout.cpp

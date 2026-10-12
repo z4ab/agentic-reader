@@ -34,6 +34,8 @@ private:
 
     void startSidecar();
     void restartSidecar();
+    // No sidecar was found: the status bar and the chat pane say so.
+    void showSidecarMissing();
 
     void onQuit(wxCommandEvent& event);
     void onAbout(wxCommandEvent& event);

@@ -63,6 +63,11 @@ public:
     // it. No restart follows. Blocks the calling (UI) thread meanwhile.
     void shutdown();
 
+    // As shutdown(), but returns at once: a background thread waits for the
+    // exit and kills the sidecar when it is still running 3 s later. No event
+    // reaches the sink afterwards.
+    void shutdownInBackground();
+
     // Stops the sidecar as shutdown() does, then starts a new one, which
     // builds its environment afresh. Queued messages are dropped. The last
     // `open_project` is re-sent once the new sidecar is ready. Sends no
@@ -105,7 +110,10 @@ private:
     struct Run;
 
     void spawn();
-    void stopProcess();
+    void shutdown(bool wait);
+    // Stops the current process. Without `wait`, a detached thread finishes
+    // the job.
+    void stopProcess(bool wait = true);
     void onProcessExit(int runId, int status);
     void onReaderEvent(wxThreadEvent& event);
     void onMessage(int runId, const protocol::Outbound& msg);

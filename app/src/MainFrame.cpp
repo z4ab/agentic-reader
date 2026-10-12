@@ -2,6 +2,7 @@
 
 #include "agent/SidecarClient.h"
 #include "chat/ChatPanel.h"
+#include "chat/SetupBanner.h"
 #include "pdf/PdfEvents.h"
 #include "pdf/PdfView.h"
 #include "settings/Settings.h"
@@ -23,8 +24,8 @@
 
 #include <cmath>
 #include <iterator>
-
 #include <map>
+#include <tuple>
 
 namespace
 {
@@ -51,6 +52,7 @@ MainFrame::MainFrame(const wxString& pdfPath)
     buildLayout();
     CreateStatusBar(kStatusFieldCount);
     SetStatusText("Ready", kFileField);
+    m_chat->setSetupNeeded(needsSetup(*m_settings));
     Bind(wxEVT_CLOSE_WINDOW, &MainFrame::onClose, this);
     startSidecar();
 
@@ -87,12 +89,16 @@ void MainFrame::startSidecar()
         [this](const std::map<wxString, wxString>& inherited) {
             return m_settings->sidecarEnv(inherited);
         });
-    if (m_sidecar->start()) {
+    if (m_sidecar->start())
         SetStatusText("Starting assistant...", kAssistantField);
-    } else {
-        SetStatusText("Assistant unavailable: reader-sidecar not found", kAssistantField);
-        m_chat->setUnavailable("The assistant is unavailable: reader-sidecar was not found.");
-    }
+    else
+        showSidecarMissing();
+}
+
+void MainFrame::showSidecarMissing()
+{
+    SetStatusText("Assistant unavailable: reader-sidecar not found", kAssistantField);
+    m_chat->setUnavailable("The assistant is unavailable: reader-sidecar was not found.");
 }
 
 void MainFrame::buildMenuBar()
@@ -219,8 +225,19 @@ void MainFrame::onSidecarMessage(wxThreadEvent& event)
 
 void MainFrame::onPreferences(wxCommandEvent& /*event*/)
 {
+    // Restart only when a setting changed. The key is compared in memory
+    // and never leaves this function.
+    auto snapshot = [this] {
+        return std::make_tuple(m_settings->model(), m_settings->useLocalLogin(),
+                               m_settings->apiKey());
+    };
+    const auto before = snapshot();
     SettingsDialog dialog(this, *m_settings);
-    if (dialog.ShowModal() == wxID_OK)
+    if (dialog.ShowModal() != wxID_OK)
+        return;
+    m_chat->setSetupNeeded(needsSetup(*m_settings));
+    // An unavailable assistant gets another try, in case it was reinstalled.
+    if (snapshot() != before || !m_chat->available())
         restartSidecar();
 }
 
@@ -228,8 +245,10 @@ void MainFrame::restartSidecar()
 {
     const wxString notice = "Settings changed, sidecar restarted";
     m_chat->interruptReply();
-    if (!m_sidecar->restart())
+    if (!m_sidecar->restart()) {
+        showSidecarMissing();
         return;
+    }
     SetStatusText(notice, kAssistantField);
     m_chat->onSidecarRestarted(notice);
 }

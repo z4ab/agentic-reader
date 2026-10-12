@@ -11,6 +11,7 @@
 #include <wx/utils.h>
 
 #include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <csignal>
 #include <mutex>
@@ -182,8 +183,12 @@ public:
         m_deleteOnExit = deleteOnExit;
     }
 
+    // Set once wx has seen the process exit, from any later owner.
+    std::shared_ptr<std::atomic<bool>> exitedFlag() const { return m_exited; }
+
     void OnTerminate(int /*pid*/, int status) override
     {
+        *m_exited = true;
         if (m_owner)
             m_owner->onProcessExit(m_runId, status);
         else if (m_deleteOnExit)
@@ -194,6 +199,7 @@ private:
     SidecarClient* m_owner;
     int m_runId;
     bool m_deleteOnExit = false;
+    std::shared_ptr<std::atomic<bool>> m_exited = std::make_shared<std::atomic<bool>>(false);
 };
 
 // One spawned sidecar process and its two reader threads.
@@ -483,21 +489,31 @@ void SidecarClient::send(const protocol::Inbound& msg)
 
 void SidecarClient::shutdown()
 {
+    shutdown(true);
+}
+
+void SidecarClient::shutdownInBackground()
+{
+    shutdown(false);
+}
+
+void SidecarClient::shutdown(bool wait)
+{
     wxASSERT(wxIsMainThread());
     if (m_state == State::ShuttingDown)
         return;
     const State previous = m_state;
     m_state = State::ShuttingDown;
     if (previous != State::Stopped)
-        logLine("shutting down");
-    stopProcess();
+        logLine(wait ? "shutting down" : "shutting down in the background");
+    stopProcess(wait);
     // Run destructors join finished threads and hand unfinished processes
     // to wx. The client no longer hears about them.
     m_retired.clear();
     m_mailbox->close();
 }
 
-void SidecarClient::stopProcess()
+void SidecarClient::stopProcess(bool wait)
 {
     m_readyTimer.Stop();
     m_restartTimer.Stop();
@@ -508,16 +524,37 @@ void SidecarClient::stopProcess()
     if (m_run && m_run->process && !m_run->exited) {
         logLine("closing sidecar stdin");
         m_run->process->CloseOutput();
-        if (!m_run->waitStdoutEof(kExitWait)) {
-            logLine("sidecar still running after 3 s, sending SIGTERM");
-            wxProcess::Kill(static_cast<int>(m_run->pid), wxSIGTERM);
-            if (!m_run->waitStdoutEof(kTermWait)) {
-                logLine("sidecar still running, sending SIGKILL");
-                wxProcess::Kill(static_cast<int>(m_run->pid), wxSIGKILL);
-                m_run->waitStdoutEof(kTermWait);
+        if (wait) {
+            if (!m_run->waitStdoutEof(kExitWait)) {
+                logLine("sidecar still running after 3 s, sending SIGTERM");
+                wxProcess::Kill(static_cast<int>(m_run->pid), wxSIGTERM);
+                if (!m_run->waitStdoutEof(kTermWait)) {
+                    logLine("sidecar still running, sending SIGKILL");
+                    wxProcess::Kill(static_cast<int>(m_run->pid), wxSIGKILL);
+                    m_run->waitStdoutEof(kTermWait);
+                }
             }
+            logLine("sidecar stopped");
+        } else {
+            // The thread holds only shared state, never the client or the Run.
+            const int pid = static_cast<int>(m_run->pid);
+            std::thread([pid, done = m_run->done, exited = m_run->process->exitedFlag(),
+                         log = m_log] {
+                auto stdoutEof = [&](std::chrono::milliseconds timeout) {
+                    std::unique_lock lock(done->mutex);
+                    return done->cv.wait_for(lock, timeout, [&] { return done->out; });
+                };
+                // Once wx has seen the exit, the pid may belong to another process.
+                if (stdoutEof(kExitWait) || *exited)
+                    return;
+                log->write(appLogLine("sidecar still running after 3 s, sending SIGTERM"));
+                wxProcess::Kill(pid, wxSIGTERM);
+                if (stdoutEof(kTermWait) || *exited)
+                    return;
+                log->write(appLogLine("sidecar still running, sending SIGKILL"));
+                wxProcess::Kill(pid, wxSIGKILL);
+            }).detach();
         }
-        logLine("sidecar stopped");
     }
     retireCurrentRun();
 }

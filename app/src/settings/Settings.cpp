@@ -1,6 +1,7 @@
 #include "settings/Settings.h"
 
 #include <wx/confbase.h>
+#include <wx/log.h>
 #include <wx/secretstore.h>
 
 #include <optional>
@@ -14,7 +15,9 @@ constexpr const char* kLocalLoginEntry = "/Agent/UseLocalLogin";
 #if wxUSE_SECRETSTORE
 
 // Opens the system store on first use, so a session that never needs the
-// key (the local login) never loads the secret service.
+// key (the local login) never loads the secret service. wxSecretStore logs
+// its own error when a call fails. Settings reports failures itself, so
+// those logs are suppressed (one error box, not two).
 class SystemKeyStore : public KeyStore
 {
 public:
@@ -26,11 +29,13 @@ public:
     bool save(const wxString& service, const wxString& username,
               const wxString& secret) override
     {
+        wxLogNull noLog;
         return store().Save(service, username, wxSecretValue(secret));
     }
 
     bool load(const wxString& service, wxString& username, wxString& secret) const override
     {
+        wxLogNull noLog;
         wxSecretValue value;
         if (!store().Load(service, username, value))
             return false;
@@ -40,6 +45,7 @@ public:
 
     bool erase(const wxString& service) override
     {
+        wxLogNull noLog;
         return store().Delete(service);
     }
 

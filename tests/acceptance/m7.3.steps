@@ -1,0 +1,328 @@
+# M7.3 acceptance: first run and the chat pane's action for each error kind,
+# against a fake sidecar (no Claude calls, no network).
+#
+# Run from the worktree root. The app runs from a copy next to the fake
+# sidecar, installed as `reader-sidecar`, so SidecarClient finds it the way a
+# packaged app finds its sidecar, and deleting that file later makes a
+# restart fail. READER_SIDECAR_CMD must not be set (it would win over the
+# file and the restart could never fail):
+#
+#   H=$(mktemp -d)
+#   O=<repo>/.verify/m7.3/<impl|review|tester>
+#   mkdir -p "$H/bin"
+#   cp build/app/agentic-reader "$H/bin/agentic-reader"
+#   cp tests/acceptance/m7.3-fake-sidecar.sh "$H/bin/reader-sidecar"
+#   chmod +x "$H/bin/reader-sidecar"
+#   env -u READER_SIDECAR_CMD READER_FAKE_LOG="$H/fake.log" \
+#     scripts/shot.sh -o "$O" -s tests/acceptance/m7.3.steps -- \
+#     env HOME="$H" DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent \
+#     "$H/bin/agentic-reader" "$PWD/tests/data/sample.pdf"
+#   grep -c '^start key=unset$' "$H/fake.log"             # must print 4
+#   grep -c '^start key=set$' "$H/fake.log"               # must print 1
+#   grep -c '^prompt Please RATELIMIT me$' "$H/fake.log"  # must print 2
+#   test ! -e "$H/bin/reader-sidecar"                      # must succeed
+#
+# Pass: shot.sh exits 0, every shot matches its comment, and the four checks
+# behave as stated:
+#   - 4 main sidecar launches: at start, after the first-run save, after the
+#     save from the auth banner, and the automatic restart after the crash.
+#     OK with nothing changed starts none (M7.2 carried note), and the last
+#     save starts none because the sidecar file is gone.
+#   - 1 Test key sidecar (it got the typed key).
+#   - "Please RATELIMIT me" reached the sidecar twice: the prompt and Retry.
+#   - UNINSTALL removed the copied sidecar.
+#
+# How first run is reached: the scratch HOME has no config file, so the
+# developer login is off (its default), and the unreachable session bus makes
+# the key store unavailable, so no key is stored. That is "no key and dev mode
+# off" (spec item 1). Enabling "Use my local Claude Code login (developer)" in
+# Preferences is the only way out of first run in this container, since no key
+# can be saved without a secret service.
+#
+# The fake sidecar (tests/acceptance/m7.3-fake-sidecar.sh, see its header)
+# answers each prompt by an upper-case word in its text: AUTH, RATELIMIT
+# (first time an error, then "Retry worked: <text>"), CLIMISSING, PROCESSFAIL,
+# BUSY, INTERNAL, MYSTERY (an unknown kind), CRASH (the sidecar exits),
+# UNINSTALL (deletes $H/bin/reader-sidecar). Other text gets "Echo: <text>".
+# Every reply ends with a cost line for $0.0010, 10 in, 5 out tokens. Test key
+# with a key containing SLOW gets no answer, and that sidecar lingers 10 s
+# after its stdin closes.
+#
+# Assumptions (the spec is silent; the implementer conforms or files a
+# TEST DISPUTE):
+#   - Layout as in tests/acceptance/m5.2.steps: 1400x900 window at the
+#     origin, chat pane x 980..1400, input at about (1180, 800), the button
+#     row's bottom edge within 10 px of the status bar (y 876).
+#   - SetupBanner (app/src/chat/SetupBanner.{h,cpp}) sits at the bottom of the
+#     chat pane in place of the input and the Send/Stop row, under the message
+#     view. Its "Open Settings" is a button, right-aligned in the banner's
+#     bottom row with its bottom edge within 10 px of the status bar, so
+#     (1355, 850) hits it, as it hits Stop when the input shows. The console
+#     link is a hyperlink whose visible text is the URL
+#     https://console.anthropic.com/settings/keys (or that URL without
+#     "https://"). The steps never click it (no browser here).
+#   - The auth banner is the same SetupBanner with the text "API key
+#     rejected", in the same place, with "Open Settings" in the same spot.
+#   - "Open Settings" opens the same Preferences dialog as Edit > Preferences,
+#     focus in the key field, Tab order as in m7.1.steps: key field, Show,
+#     Test key, model field, dev check box. Return in the model field is OK.
+#     Escape is Cancel.
+#   - After Preferences closes with OK, the chat pane re-checks first run: the
+#     banner (first-run or auth) goes away and the input comes back when a key
+#     is stored or the developer login is on. Cancel changes nothing.
+#   - rate_limit: the notice is inline in the message view. Its retry button
+#     is a wxButton labelled "Retry" at the left end of the button row (left
+#     edge within 10 px of the pane's left edge; Send and Stop stay
+#     right-aligned), so (1030, 850) hits it. It shows only while the latest
+#     reply ended with rate_limit. Pressing it sends the same prompt text
+#     again; showing the user's message a second time is optional.
+#   - process: the chat is reopened in the running sidecar (the existing
+#     reopen path, M5.2 carried note), not by restarting the sidecar. The
+#     input stays enabled.
+#   - cli_missing: the chat is reopened the same way and the input stays
+#     enabled. The message is shown inline (not as a banner).
+#   - The sidecar itself exiting (EVT_SIDECAR_DOWN, "CRASH") ends the reply
+#     with a notice that the agent stopped and is restarting. Either the
+#     M5.2 wording ("The assistant stopped unexpectedly ... It is restarting")
+#     or "Agent stopped, restarting…" passes.
+#   - Wording that must appear verbatim (case-insensitive, "..." for "…"
+#     passes): "Add your Anthropic API key to start", "Open Settings",
+#     "API key rejected", "Installation is incomplete, reinstall the app",
+#     "Agent stopped, restarting…". The sidecar's own message may follow
+#     these, for example "Error: simulated internal failure".
+#
+# Carried notes covered here: KeyTester shutdown off the UI thread (shot
+# settings-reopened-promptly), OK with no change restarts nothing (shot
+# ok-without-changes and the start count), a failed restart after saving
+# shows the unavailable state (shot restart-failed-unavailable).
+# Not covered: a rejected RateLimitEvent followed by a non-error result
+# reaches the app as a plain `result` (the protocol carries no rate-limit
+# signal in that case), and a crash after an interrupt (the sidecar decides
+# both; the app cannot see them). The double error box on a failed key store
+# save needs a secret service that fails a save.
+wait 3
+
+# First run. Center pane: page 1 of sample.pdf. Chat pane: the message view
+# on top, and at the bottom, where the input and Send/Stop were, a banner with
+# the text "Add your Anthropic API key to start", a link reading
+# https://console.anthropic.com/settings/keys (blue or underlined), and an
+# "Open Settings" button at its bottom right. No input field, no Send and no
+# Stop button are visible. No red error text and no dialog.
+shot first-run-banner
+
+click 1355 850
+wait 2
+
+# "Open Settings" opened the Preferences dialog over the main window: the
+# empty API key field with Show and Test key, the model field, and the
+# unchecked "Use my local Claude Code login (developer)" check box, with OK
+# and Cancel. (The red "cannot be stored securely" message is expected here.)
+shot settings-from-banner
+
+type sk-ant-test-SLOWKEY0123456789
+key Tab Tab
+key space
+wait 1.5
+
+# Test key is running: the dialog shows "Testing the key..." and the key
+# field shows 29 mask characters. Nothing else changed.
+shot key-test-running
+
+key Escape
+click 1355 850
+wait 1
+
+# Cancel during a running Test key does not freeze the app (M7.1 carried
+# note: the test sidecar ignores stdin EOF for 10 s, so a shutdown on the UI
+# thread blocks for 3 s). About 2 s after Escape the second click on "Open
+# Settings" has already opened a fresh Preferences dialog: empty key field, no
+# "Testing the key..." text, dev check box unchecked. The screen is fully
+# painted (no grey or blank areas in the dialog or the main window).
+shot settings-reopened-promptly
+
+key Tab Tab Tab Tab
+key space
+wait 0.5
+
+# The dev check box "Use my local Claude Code login (developer)" is checked.
+shot dev-login-checked
+
+key shift+Tab
+key Return
+wait 3
+
+# The dialog is closed. The first-run banner is gone: the chat pane shows the
+# message view with the grey line "Settings changed, sidecar restarted", and
+# under it the empty input, Send (enabled) and Stop (greyed out), as in M5.2.
+# No Retry button. The status bar reads "Assistant ready".
+shot chat-ready
+
+click 1180 800
+type Hello there
+key Return
+wait 2.5
+
+# A working chat: the user message "Hello there", the reply "Echo: Hello
+# there" and under it the grey cost line ($0.0010, 10 in, 5 out). No red text.
+# Send is enabled.
+shot working-reply
+
+key alt+e
+wait 1
+key p
+wait 2
+key Tab Tab Tab
+key Return
+wait 2
+
+# OK with nothing changed restarted nothing (M7.2 carried note): the dialog
+# is closed, the chat pane still ends with the "Echo: Hello there" reply and
+# its cost line, with no second "Settings changed, sidecar restarted" line
+# and no "Stopped." line. The status bar reads "Assistant ready".
+shot ok-without-changes
+
+click 1180 800
+type Trigger AUTH now
+key Return
+wait 2.5
+
+# auth: the user message "Trigger AUTH now" is in the view. The input and
+# Send/Stop are replaced by the banner reading "API key rejected" with the
+# "Open Settings" button at its bottom right. The first-run text "Add your
+# Anthropic API key to start" is not shown.
+shot auth-banner
+
+click 1355 850
+wait 2
+key Tab Tab Tab
+type claude-test-model
+key Return
+wait 3
+
+# "Open Settings" on the auth banner opened Preferences (the model was set to
+# claude-test-model and saved). The dialog is closed, the auth banner is
+# gone, and the input with Send (enabled) and Stop is back. The view ends with
+# the grey line "Settings changed, sidecar restarted". Status bar "Assistant
+# ready".
+shot auth-banner-cleared
+
+click 1180 800
+type Please RATELIMIT me
+key Return
+wait 2.5
+
+# rate_limit: under the user message "Please RATELIMIT me" an inline notice in
+# the message view says the rate limit was reached (for example "rate limit
+# reached, try again later"). A "Retry" button shows at the left end of the
+# button row, Send is enabled, the input is visible (no banner), and no cost
+# line follows the notice.
+shot rate-limit-notice
+
+click 1030 850
+wait 2.5
+
+# Retry resent the prompt: the view now ends with the reply "Retry worked:
+# Please RATELIMIT me" and its grey cost line. The Retry button is gone.
+# Send is enabled.
+shot rate-limit-retried
+
+click 1180 800
+type Trigger INTERNAL now
+key Return
+wait 2
+click 1180 800
+type Trigger MYSTERY now
+key Return
+wait 2
+
+# Other kinds are inline: under "Trigger INTERNAL now" an inline red message
+# containing "simulated internal failure", and under "Trigger MYSTERY now" an
+# inline red message containing "simulated unknown failure". No banner, no
+# Retry button, no dialog. The input is visible and Send is enabled.
+shot inline-errors
+
+click 1180 800
+type Trigger BUSY now
+key Return
+wait 3.5
+
+# busy is ignored: under "Trigger BUSY now" the whole reply "Working on it.
+# Still working, done." and its grey cost line. No notice of any kind (no
+# "busy", no red text) and no Retry button. Send is enabled.
+shot busy-ignored
+
+click 1180 800
+type Trigger PROCESSFAIL now
+key Return
+wait 2
+
+# process: under "Trigger PROCESSFAIL now" the notice "Agent stopped,
+# restarting…" (or "..."). No banner, no dialog. The input is visible and
+# Send is enabled.
+shot process-restarting
+
+click 1180 800
+type After the process error
+key Return
+wait 2.5
+
+# The chat was reopened after the process error: "After the process error"
+# got the reply "Echo: After the process error" and its cost line. No red
+# "chat is not open" notice.
+shot after-process
+
+click 1180 800
+type Trigger CRASH now
+key Return
+wait 4
+
+# The sidecar itself exited: under "Trigger CRASH now" the partial reply
+# "About to crash." and a notice that the agent stopped and is restarting.
+# The restarted sidecar is up: the status bar reads "Assistant ready" and
+# Send is enabled.
+shot sidecar-crash
+
+click 1180 800
+type After the crash
+key Return
+wait 2.5
+
+# The chat works after the restart: "After the crash" got the reply "Echo:
+# After the crash" and its cost line. No red text after the crash notice.
+shot after-crash
+
+click 1180 800
+type Trigger CLIMISSING now
+key Return
+wait 2
+
+# cli_missing: under "Trigger CLIMISSING now" the message "Installation is
+# incomplete, reinstall the app", inline in the view (no banner, no dialog).
+# The input is still visible.
+shot cli-missing
+
+click 1180 800
+type UNINSTALL the sidecar
+key Return
+wait 2.5
+
+# The reply reads "Removed reader-sidecar." (the copied sidecar file is gone).
+# "Not removed: ..." means the run did not follow the header and the next
+# shot is meaningless.
+shot sidecar-removed
+
+key alt+e
+wait 1
+key p
+wait 2
+key Tab Tab Tab
+type claude-other-model
+key Return
+wait 3
+
+# The restart after saving failed because the sidecar file is gone (M7.2
+# carried note): the dialog is closed, the status bar reads "Assistant
+# unavailable" (followed by a reason), not "Assistant ready" and not
+# "Settings changed, sidecar restarted". The chat pane ends with a red notice
+# that the assistant is unavailable, and Send is greyed out.
+shot restart-failed-unavailable

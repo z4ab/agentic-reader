@@ -115,6 +115,8 @@ class Chat:
         self._connected = False
         self._interrupted = False
         self._reply: asyncio.Task[None] | None = None
+        # The newest session_id the CLI reported, for a reconnect.
+        self._session_id: str | None = None
 
     @property
     def busy(self) -> bool:
@@ -131,6 +133,7 @@ class Chat:
 
     async def _reply_once(self, text: str, seq: int | None) -> None:
         failure: str | None = None
+        produced = False  # a text_delta or tool_use was sent
         try:
             if not self._connected:
                 await self.client.connect()
@@ -142,18 +145,28 @@ class Chat:
             await self.client.query(text)
             ended = False
             async for message in self.client.receive_response():
+                session_id = getattr(message, "session_id", None)
+                if isinstance(session_id, str) and session_id:
+                    self._session_id = session_id
                 failure = failure or turn_kind(message)
-                if isinstance(message, ResultMessage) and message.is_error and failure is not None:
-                    if not (self._interrupted and failure == "result"):
+                if isinstance(message, ResultMessage) and failure is not None:
+                    reported = message.is_error and not (self._interrupted and failure == "result")
+                    # A rejected rate limit (or an auth failure) can end with a
+                    # plain result. With no reply at all, the turn still failed.
+                    silent = not message.is_error and not produced and not self._interrupted
+                    if reported or silent:
                         log.error("chat %s: reply failed with an error result, kind %s", self.chat_id, failure)
                         await self._send_error(turn_message(failure, message), seq, kind=failure)
                         return
                 for out in to_outbound(self.chat_id, message):
                     await self._writer.send(out)
+                    produced = produced or not isinstance(out, Result)
                 ended = isinstance(message, ResultMessage)
         except Exception as exc:
             if self._interrupted:
                 log.info("chat %s: reply raised %s after an interrupt", self.chat_id, type(exc).__name__)
+                if isinstance(exc, CRASH_TYPES):
+                    await self._drop_connection()
                 await self._send_error("reply interrupted", seq, kind="interrupted")
                 return
             await self._fail(exc, seq)
@@ -186,6 +199,20 @@ class Chat:
                 await self.client.disconnect()
             except Exception as close_exc:
                 log.info("chat %s: disconnect after a crash raised %s", self.chat_id, type(close_exc).__name__)
+
+    async def _drop_connection(self) -> None:
+        """Forget a CLI that died after an interrupt.
+
+        The chat stays open. Its next prompt connects a new CLI process that
+        resumes the session, so the user's next message is not lost.
+        """
+        self._connected = False
+        if self._session_id:
+            self.client.options.resume = self._session_id
+        try:
+            await self.client.disconnect()
+        except Exception as close_exc:
+            log.info("chat %s: disconnect after an interrupt raised %s", self.chat_id, type(close_exc).__name__)
 
     async def _send_error(self, message: str, seq: int | None, kind: str = "internal") -> None:
         await self._writer.send(Error(chat_id=self.chat_id, kind=kind, message=message, seq=seq))

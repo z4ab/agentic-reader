@@ -88,7 +88,7 @@ Reopens a saved chat. The sidecar answers with `chat_started` carrying the same 
 
 ### `interrupt`
 
-Stops the reply running in a chat. The reply still ends with its `result`, or with an `error` of kind `interrupted`. An interrupt for a chat with no running reply does nothing.
+Stops the reply running in a chat. The reply still ends with its `result`, or with an `error` of kind `interrupted`. An interrupt for a chat with no running reply does nothing. If the agent CLI process dies after an interrupt, the chat stays open: its next prompt starts a new CLI process that resumes the session.
 
 | field | type | meaning |
 |---|---|---|
@@ -223,8 +223,8 @@ Error kinds:
 - `cli_missing`: the agent CLI was not found. The chat is closed.
 - `process`: the agent CLI process failed or could not be reached. The chat is closed.
 - `result`: the reply ended with an error result, such as hitting the turn limit. `message` names its `terminal_reason`. If the CLI process exited, the chat is closed.
-- `auth`: the API key is missing or invalid.
-- `rate_limit`: the API rate limit was reached.
+- `auth`: the API key is missing or invalid. Like `rate_limit`, also sent in place of `result` when the CLI rejected the request and the reply sent no `text_delta` or `tool_use`.
+- `rate_limit`: the API rate limit was reached. Also sent in place of `result` when the CLI rejected the request for its rate limit and the reply sent no `text_delta` or `tool_use`.
 - `internal`: any other failure. The chat stays open.
 
 A reply error (`interrupted` through `internal`) ends the reply in place of `result`. When an error says the chat is closed, later messages for its `chat_id` get `unknown_chat` until the app reopens it with `resume_chat`. `auth` and `rate_limit` close the chat only when the CLI process exited. A `message` never holds environment values or the API key.

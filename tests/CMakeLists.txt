@@ -3,6 +3,10 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 # Later test targets also link the reader_core static library (tasks/VERIFY.md).
 
+add_executable(test_error_ux test_error_ux.cpp)
+target_link_libraries(test_error_ux PRIVATE doctest::doctest reader_core)
+add_test(NAME error_ux COMMAND test_error_ux)
+
 add_executable(test_markdown test_markdown.cpp)
 target_link_libraries(test_markdown PRIVATE doctest::doctest reader_core)
 add_test(NAME markdown COMMAND test_markdown)
@@ -61,6 +65,12 @@ if(NOT WIN32)
     add_executable(test_sidecar_restart test_sidecar_restart.cpp)
     target_link_libraries(test_sidecar_restart PRIVATE doctest::doctest reader_core)
     add_test(NAME sidecar_restart COMMAND test_sidecar_restart)
+endif()
+
+if(NOT WIN32)
+    add_executable(test_sidecar_shutdown test_sidecar_shutdown.cpp)
+    target_link_libraries(test_sidecar_shutdown PRIVATE doctest::doctest reader_core)
+    add_test(NAME sidecar_shutdown COMMAND test_sidecar_shutdown)
 endif()
 
 add_executable(test_smoke test_smoke.cpp)

@@ -165,7 +165,9 @@ void KeyTester::stop()
     ++m_generation;
     m_timeout.Stop();
     if (m_sidecar) {
-        m_sidecar->shutdown();
+        // Not on the UI thread: a sidecar that ignores the closed stdin would
+        // freeze the dialog for seconds.
+        m_sidecar->shutdownInBackground();
         m_sidecar.reset();
     }
     if (!m_projectDir.empty()) {

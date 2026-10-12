@@ -3,6 +3,7 @@
 #include "agent/SidecarClient.h"
 #include "chat/Markdown.h"
 #include "chat/PermissionDialog.h"
+#include "chat/SetupBanner.h"
 #include "chat/ToolFormat.h"
 
 #include <wx/button.h>
@@ -230,27 +231,35 @@ ChatPanel::ChatPanel(wxWindow* parent, SidecarClient& sidecar)
                               wxHW_SCROLLBAR_AUTO | wxBORDER_THEME);
     m_input = new wxTextCtrl(this, wxID_ANY, wxString(), wxDefaultPosition,
                              wxSize(-1, kInputHeight), wxTE_MULTILINE);
+    m_retry = new wxButton(this, wxID_ANY, "Retry");
     m_send = new wxButton(this, wxID_ANY, "Send");
     m_stop = new wxButton(this, wxID_ANY, "Stop");
+    m_banner = new SetupBanner(this);
 
-    auto* buttons = new wxBoxSizer(wxHORIZONTAL);
-    buttons->Add(m_send, 0, wxRIGHT, kGap);
-    buttons->Add(m_stop);
+    // Retry at the left end, Send and Stop at the right.
+    m_buttons = new wxBoxSizer(wxHORIZONTAL);
+    m_buttons->Add(m_retry);
+    m_buttons->AddStretchSpacer();
+    m_buttons->Add(m_send, 0, wxRIGHT, kGap);
+    m_buttons->Add(m_stop);
 
     // M5.3 adds the context chip between the view and the input.
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     sizer->Add(m_view, 1, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, kGap);
     sizer->Add(m_input, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, kGap);
-    sizer->Add(buttons, 0, wxALIGN_RIGHT | wxALL, kGap);
+    sizer->Add(m_buttons, 0, wxEXPAND | wxALL, kGap);
+    // In place of the input and the buttons.
+    sizer->Add(m_banner, 0, wxEXPAND | wxALL, kGap);
     SetSizer(sizer);
 
     m_input->Bind(wxEVT_KEY_DOWN, &ChatPanel::onInputKey, this);
     m_send->Bind(wxEVT_BUTTON, &ChatPanel::onSend, this);
     m_stop->Bind(wxEVT_BUTTON, &ChatPanel::onStop, this);
+    m_retry->Bind(wxEVT_BUTTON, &ChatPanel::onRetry, this);
     m_view->Bind(wxEVT_HTML_LINK_CLICKED, &ChatPanel::onLink, this);
     Bind(wxEVT_TIMER, &ChatPanel::onRenderTimer, this);
 
-    updateButtons();
+    updateControls();
     render();
 }
 
@@ -267,7 +276,14 @@ void ChatPanel::setUnavailable(const wxString& reason)
     m_available = false;
     m_historyHtml += redHtml(markdown::escapeText(reason.utf8_string()));
     updateButtons();
-    render();
+    render(true);
+}
+
+void ChatPanel::setSetupNeeded(bool setupNeeded)
+{
+    m_setupNeeded = setupNeeded;
+    m_keyRejected = false;
+    updateControls();
 }
 
 void ChatPanel::startChat()
@@ -305,9 +321,9 @@ void ChatPanel::onSidecarDown(const wxString& reason)
     // Requests to the old process cannot be answered any more.
     dropPermissions({});
     if (m_running) {
-        endReply(redHtml(markdown::escapeText(
-            "The assistant stopped unexpectedly (" + reason.utf8_string()
-            + "). It is restarting. Send your message again.")));
+        endReply(redHtml(markdown::escapeText("Agent stopped, restarting\xe2\x80\xa6 ("
+                                              + reason.utf8_string() + ")"))
+                 + greyHtml("Send your message again."));
     }
     // The old chat died with the process. Queued until the restart is ready.
     if (m_hasProject)
@@ -325,7 +341,9 @@ void ChatPanel::interruptReply()
 
 void ChatPanel::onSidecarRestarted(const wxString& notice)
 {
+    m_available = true;
     m_historyHtml += greyHtml(markdown::escapeText(notice.utf8_string()));
+    updateButtons();
     render(true);
     // Queued until the new sidecar is ready.
     if (m_hasProject)
@@ -344,33 +362,60 @@ void ChatPanel::onResult(const protocol::Result& result)
 
 void ChatPanel::onError(const protocol::Error& error)
 {
+    const ErrorAction action = errorAction(error.kind);
+    // busy cannot come from this pane, which never sends while a reply runs.
+    // A running reply goes on.
+    if (action == ErrorAction::Ignore)
+        return;
     // A chat's error ends its reply, and with it any permission request.
     if (error.chatId)
         dropPermissions(*error.chatId);
     if (error.chatId && *error.chatId != m_chatId)
         return;
 
+    // An error without a chat_id is not about the running reply.
+    const bool endsReply = m_running && error.chatId;
+    const std::string message = markdown::escapeText(error.message);
     std::string notice;
-    if (error.kind == "interrupted")
+    switch (action) {
+    case ErrorAction::Stopped:
         notice = greyHtml("Stopped.");
-    else
-        notice = redHtml(markdown::escapeText("Error: " + error.message));
+        break;
+    case ErrorAction::AuthBanner:
+        notice = redHtml("API key rejected: " + message);
+        m_keyRejected = true;
+        break;
+    case ErrorAction::RetryNotice:
+        notice = redHtml("The rate limit was reached. Wait a moment, then press Retry.");
+        if (endsReply)
+            m_retryText = m_lastPrompt;
+        break;
+    case ErrorAction::Reinstall:
+        notice = redHtml("Installation is incomplete, reinstall the app.");
+        break;
+    case ErrorAction::Restarting:
+        notice = redHtml("Agent stopped, restarting\xe2\x80\xa6");
+        break;
+    case ErrorAction::Inline:
+    case ErrorAction::Ignore:
+        notice = redHtml("Error: " + message);
+        break;
+    }
 
     // These leave the chat closed in the sidecar. Reopen it for the next send.
-    const bool closed =
-        error.kind == "unknown_chat" || error.kind == "cli_missing" || error.kind == "process";
-    if (closed && m_hasProject) {
-        notice += greyHtml("The chat was reopened. Send your message again.");
+    if (errorClosesChat(error.kind) && m_hasProject) {
+        if (action != ErrorAction::Reinstall)
+            notice += greyHtml("The chat was reopened. Send your message again.");
         startChat();
     }
 
-    // An error without a chat_id is not about the running reply.
-    if (m_running && error.chatId) {
+    if (endsReply) {
         endReply(notice);
     } else {
         m_historyHtml += notice;
         render();
     }
+    updateControls();
 }
 
 void ChatPanel::onToolUse(const protocol::ToolUse& tool)
@@ -426,9 +471,14 @@ void ChatPanel::dropPermissions(const std::string& chatId)
         m_permissionDialog->dismiss();
 }
 
+bool ChatPanel::canSend() const
+{
+    return m_available && !m_running && !m_setupNeeded && !m_keyRejected;
+}
+
 void ChatPanel::send()
 {
-    if (!m_available || m_running)
+    if (!canSend())
         return;
     const wxString value = m_input->GetValue();
     if (value.Strip(wxString::both).empty())
@@ -438,15 +488,27 @@ void ChatPanel::send()
         render(true);
         return;
     }
-
-    const std::string text = value.utf8_string();
-    m_historyHtml += userHtml(text);
     m_input->Clear();
+    startReply(value.utf8_string());
+}
+
+void ChatPanel::retry()
+{
+    if (!canSend() || m_retryText.empty() || !m_hasProject)
+        return;
+    startReply(m_retryText);
+}
+
+void ChatPanel::startReply(std::string text)
+{
+    m_historyHtml += userHtml(text);
+    m_lastPrompt = text;
+    m_retryText.clear();
     m_replyHtml.clear();
     m_reply.clear();
     m_running = true;
     m_stopRequested = false;
-    updateButtons();
+    updateControls();
     m_sidecar.send(protocol::Prompt{m_chatId, text, std::nullopt, std::nullopt});
     render(true);
 }
@@ -475,6 +537,27 @@ void ChatPanel::updateButtons()
 {
     m_send->Enable(m_available && !m_running);
     m_stop->Enable(m_running && !m_stopRequested);
+    m_retry->Enable(m_available && !m_running);
+    const bool retry = !m_retryText.empty() && !m_running && !m_setupNeeded && !m_keyRejected;
+    if (m_retry->IsShown() != retry) {
+        m_retry->Show(retry);
+        m_buttons->Layout();
+    }
+}
+
+void ChatPanel::updateControls()
+{
+    const bool banner = m_setupNeeded || m_keyRejected;
+    if (banner) {
+        m_banner->setReason(m_setupNeeded ? SetupBanner::Reason::FirstRun
+                                          : SetupBanner::Reason::KeyRejected);
+    }
+    wxSizer* sizer = GetSizer();
+    sizer->Show(m_input, !banner);
+    sizer->Show(m_buttons, !banner);
+    sizer->Show(m_banner, banner);
+    updateButtons();
+    Layout();
 }
 
 void ChatPanel::scheduleRender()
@@ -548,6 +631,12 @@ void ChatPanel::onSend(wxCommandEvent& /*event*/)
 void ChatPanel::onStop(wxCommandEvent& /*event*/)
 {
     stop();
+}
+
+void ChatPanel::onRetry(wxCommandEvent& /*event*/)
+{
+    retry();
+    m_input->SetFocus();
 }
 
 void ChatPanel::onLink(wxHtmlLinkEvent& event)

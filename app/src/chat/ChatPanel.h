@@ -9,16 +9,20 @@
 #include <string>
 
 class PermissionDialog;
+class SetupBanner;
 class SidecarClient;
 class wxButton;
 class wxCommandEvent;
 class wxHtmlLinkEvent;
 class wxHtmlWindow;
 class wxKeyEvent;
+class wxSizer;
 class wxTextCtrl;
 class wxTimerEvent;
 
 // The chat pane: message view, input, Send and Stop. One chat per project.
+// A SetupBanner takes the place of the input on first run and after the API
+// key was rejected. A rate limit adds a Retry button.
 //
 // The owner forwards sidecar events to onSidecarMessage() and
 // onSidecarDown(). Everything runs on the UI thread.
@@ -33,6 +37,12 @@ public:
 
     // No sidecar can run. Shows `reason` and disables Send.
     void setUnavailable(const wxString& reason);
+    bool available() const { return m_available; }
+
+    // Settings were loaded or saved. `setupNeeded` (needsSetup()) shows the
+    // first-run banner in place of the input. Clears the "API key rejected"
+    // banner, since the user has been to Settings.
+    void setSetupNeeded(bool setupNeeded);
 
     void onSidecarMessage(const protocol::Outbound& msg);
 
@@ -44,16 +54,23 @@ public:
     // running reply and ends it with "Stopped.".
     void interruptReply();
 
-    // The owner restarted the sidecar. Shows `notice` and reopens the chat in
-    // the new sidecar.
+    // The owner restarted the sidecar. Shows `notice`, makes the pane
+    // available again and reopens the chat in the new sidecar.
     void onSidecarRestarted(const wxString& notice);
 
 private:
+    bool canSend() const;
     void send();
+    // Shows `text` as the user's message and sends it. By value: Retry
+    // passes m_retryText, which this clears.
+    void startReply(std::string text);
+    void retry();
     void stop();
     void startChat();
     void endReply(const std::string& trailerHtml);
     void updateButtons();
+    // Shows the banner or the input, and Retry when it applies.
+    void updateControls();
     void scheduleRender();
     // Rebuilds the view. Keeps the scroll position unless the view was at
     // the bottom or `toBottom` is set.
@@ -76,6 +93,7 @@ private:
     void onInputKey(wxKeyEvent& event);
     void onSend(wxCommandEvent& event);
     void onStop(wxCommandEvent& event);
+    void onRetry(wxCommandEvent& event);
     void onLink(wxHtmlLinkEvent& event);
     void onRenderTimer(wxTimerEvent& event);
 
@@ -85,9 +103,14 @@ private:
     wxTextCtrl* m_input = nullptr;
     wxButton* m_send = nullptr;
     wxButton* m_stop = nullptr;
+    wxButton* m_retry = nullptr;
+    wxSizer* m_buttons = nullptr;
+    SetupBanner* m_banner = nullptr;
     wxTimer m_renderTimer;
 
     bool m_available = true;
+    bool m_setupNeeded = false;
+    bool m_keyRejected = false;
     bool m_hasProject = false;
     std::string m_chatId;
     // From the last `result`. A reopened chat resumes this session.
@@ -95,6 +118,11 @@ private:
 
     bool m_running = false;
     bool m_stopRequested = false;
+    // The text of the running or last reply's prompt.
+    std::string m_lastPrompt;
+    // The prompt Retry sends again. Set while the last reply ended with
+    // rate_limit.
+    std::string m_retryText;
     // Finished messages as HTML. The running reply is HTML up to its last
     // tool line, then Markdown.
     std::string m_historyHtml;
