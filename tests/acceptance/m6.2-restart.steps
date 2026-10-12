@@ -1,0 +1,114 @@
+# M6.2 acceptance, run 2 of 2: the restart reopens the last project and its
+# open file; PDFs opened from inside a project stay in it. Run with
+# tests/acceptance/m6.2.sh after run 1 (m6.2.steps), with the same scratch
+# HOME. This run is
+#   scripts/shot.sh -o <out>/run2 -s tests/acceptance/m6.2-restart.steps -- \
+#     env HOME=/tmp/agentic-reader-m6.2/home \
+#       READER_SIDECAR_CMD=<worktree>/tests/acceptance/m6.2-fake-sidecar.sh \
+#       READER_FAKE_LOG=/tmp/agentic-reader-m6.2/fake-run2.log \
+#       ./build/app/agentic-reader
+# No file on the command line.
+#
+# Interface choices are the ones at the top of m6.2.steps. In addition:
+#   - At start, with no file on the command line, the app reopens the last
+#     project it had open (here proj, left through Ctrl+Q in run 1) and that
+#     project's open_file (papers/long.pdf).
+#   - A PDF opened from inside the open project, at any depth, keeps the
+#     project: same tree and header, no new open_project, no .reader/ in its
+#     subfolder. A PDF inside a saved project that is not open (a folder or
+#     an ancestor holds .reader/) opens that project, not an unsaved project
+#     of the PDF's own folder (tests/test_project_panel.cpp).
+#   - The PDF pane still accepts a dropped PDF (M2.5), driven by
+#     /tmp/agentic-reader-m6.2/xdnd-drop built from tests/acceptance/xdnd_drop.c.
+#
+# State after run 1: proj holds fresh/inside.pdf, papers/deep/nested.pdf,
+# papers/long.pdf, added.pdf, omega.pdf; loose holds single.pdf and its
+# .reader/. Recent Projects: 1 proj, 2 loose.
+wait 4
+
+# The restart reopened proj and its open file: the header names "proj", the
+# tree shows fresh, inside.pdf, papers, deep, nested.pdf, long.pdf,
+# added.pdf, omega.pdf. long.pdf is open with "Page 1 of 520" at the top of
+# the PDF pane, entry "1 / 520", status field 0 "long.pdf".
+shot restart-reopened
+
+key alt+f
+wait 1
+key j
+wait 1
+
+# Recent Projects survived the restart: 1 proj, 2 loose.
+shot recent-projects-after-restart
+
+key Escape
+key Escape
+wait 1
+key ctrl+o
+wait 2
+key alt+Home
+wait 1
+key ctrl+l
+wait 1
+key space
+key Home
+run xdotool type --delay 0 /tmp/agentic-reader-m6.2/proj/papers/deep/nested.pdf
+key End BackSpace
+wait 1
+key Return
+wait 3
+run test ! -e /tmp/agentic-reader-m6.2/proj/papers/deep/.reader
+
+# File > Open of a PDF deep inside the open project keeps the project: the
+# header still names "proj" (not "Unsaved project"), the tree is unchanged
+# from restart-reopened, nested.pdf is open (coloured page, entry "1 / 1",
+# status field 0 "nested.pdf").
+shot open-inside-project
+
+key ctrl+o
+wait 2
+key alt+Home
+wait 1
+key ctrl+l
+wait 1
+key space
+key Home
+run xdotool type --delay 0 /tmp/agentic-reader-m6.2/loose/single.pdf
+key End BackSpace
+wait 1
+key Return
+wait 3
+
+# loose was saved in run 1, so single.pdf opens the saved project loose: the
+# header names "loose" with no "Unsaved project" and no button, the tree
+# shows only single.pdf, single.pdf is open ("Page One", entry "1 / 3",
+# status field 0 "single.pdf").
+shot open-saved-loose
+
+key ctrl+o
+wait 2
+key alt+Home
+wait 1
+key ctrl+l
+wait 1
+key space
+key Home
+run xdotool type --delay 0 /tmp/agentic-reader-m6.2/proj/papers/deep/nested.pdf
+key End BackSpace
+wait 1
+key Return
+wait 3
+run test ! -e /tmp/agentic-reader-m6.2/proj/papers/deep/.reader
+
+# A PDF deep inside proj, opened while loose is the project, opens proj (the
+# nearest folder with .reader/), not an unsaved project of papers/deep: the
+# header names "proj", the tree is as in restart-reopened, nested.pdf is
+# open (entry "1 / 1", status field 0 "nested.pdf").
+shot open-nested-switches-to-proj
+
+run /tmp/agentic-reader-m6.2/xdnd-drop 600 470 /tmp/agentic-reader-m6.2/proj/added.pdf
+wait 3
+
+# A PDF of the open project dropped on the PDF pane opens: "Page One" at the
+# top, entry "1 / 3", status field 0 "added.pdf". The header still names
+# "proj" and the tree is unchanged.
+shot drop-in-project

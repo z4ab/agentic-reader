@@ -35,6 +35,10 @@ public:
     // the one that opened it (empty for an unencrypted file), so the render
     // thread can open its own copy.
     void setDocument(std::unique_ptr<PdfDocument> doc, std::string password);
+    // Shows no document: stops the render thread, drops cached pages, word
+    // boxes and results in flight, and paints the empty pane. Does nothing
+    // when no document is open.
+    void closeDocument();
 
     // 0-based page with the most visible area, or -1 with no document.
     int currentPage() const { return m_currentPage; }

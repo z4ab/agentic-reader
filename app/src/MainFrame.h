@@ -3,18 +3,20 @@
 #include <wx/frame.h>
 #include <wx/string.h>
 
+#include <filesystem>
 #include <memory>
 
 class ChatPanel;
 class KeyStore;
 class PdfView;
+class Project;
+class ProjectPanel;
 class Settings;
 class SidecarClient;
 class wxCloseEvent;
 class wxComboBox;
 class wxCommandEvent;
 class wxFileHistory;
-class wxPanel;
 class wxStaticText;
 class wxTextCtrl;
 class wxWindow;
@@ -29,14 +31,18 @@ public:
     // Opens a PDF in the view, asking for a password when it is encrypted.
     // On failure shows a message box and keeps the current document. A
     // cancelled password prompt ends the attempt silently. Used by File >
-    // Open, File > Recent, drag and drop and the command line.
+    // Open, File > Recent, drag and drop, the project panel and the command
+    // line. A PDF outside the open project switches projects (projectFolderFor()).
     void openFile(const wxString& path);
+
+    // Reopens the last project and its open file. Called once at start, after
+    // the event loop runs, when no file was given on the command line.
+    void restoreSession();
 
 private:
     void buildMenuBar();
     void buildToolBar();
     void buildLayout();
-    wxPanel* makePane(wxWindow* parent, const wxString& label);
 
     void startSidecar();
     void restartSidecar();
@@ -46,11 +52,35 @@ private:
     // Shows the open document's name in the status bar and its page count
     // and zoom in the toolbar.
     void showOpenedFile();
+    // Empties the PDF view, the file name in the status bar and the page
+    // total.
+    void closeFile();
     void saveFileHistory();
+    void saveProjectHistory();
+
+    // Makes the folder `root` the open project and opens its open_file, if
+    // any. `save` creates its .reader/ (Open Project, Recent Projects, a
+    // dropped folder). Without it a folder with no .reader/ opens unsaved.
+    void openProjectFolder(const std::filesystem::path& root, bool save);
+    // Leaves the open project and makes `root` the open one: the panel shows
+    // it and the chat moves to it. Does not open a file.
+    void enterProject(const std::filesystem::path& root, bool save);
+    // Writes the open project's open_file to .reader/project.json. Does nothing
+    // for an unsaved project.
+    void saveProjectState();
+    // Writes .reader/project.json, with a message box on failure.
+    void saveProject();
+    // Creates .reader/ in the open unsaved project.
+    void saveAsProject();
+    void addRecentProject();
 
     void onOpen(wxCommandEvent& event);
     void onRecent(wxCommandEvent& event);
-    void onFileDropped(wxCommandEvent& event);
+    void onOpenProject(wxCommandEvent& event);
+    void onRecentProject(wxCommandEvent& event);
+    void onPathDropped(wxCommandEvent& event);
+    void onProjectFileActivated(wxCommandEvent& event);
+    void onSaveAsProject(wxCommandEvent& event);
     void onQuit(wxCommandEvent& event);
     void onAbout(wxCommandEvent& event);
     void onPreferences(wxCommandEvent& event);
@@ -73,9 +103,13 @@ private:
     std::unique_ptr<KeyStore> m_keyStore;
     std::unique_ptr<Settings> m_settings;
     ChatPanel* m_chat = nullptr;
+    ProjectPanel* m_projectPanel = nullptr;
     std::unique_ptr<SidecarClient> m_sidecar;
     std::unique_ptr<wxFileHistory> m_fileHistory;
-    // Folder of the open PDF, sent to the chat as the project. Empty until a
-    // file opens.
-    wxString m_projectDir;
+    std::unique_ptr<wxFileHistory> m_projectHistory;
+    // Root of the open project, saved or unsaved. Empty until one opens.
+    std::filesystem::path m_projectRoot;
+    // The open project's .reader/ state. Null for an unsaved project, which
+    // keeps nothing on disk.
+    std::unique_ptr<Project> m_project;
 };

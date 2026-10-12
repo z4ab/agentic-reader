@@ -100,6 +100,23 @@ void PdfView::setDocument(std::unique_ptr<PdfDocument> doc, std::string password
     sendZoomChanged();
 }
 
+void PdfView::closeDocument()
+{
+    if (!m_doc)
+        return;
+    // Results already queued from the old worker carry the old generation.
+    ++m_generation;
+    m_worker.reset();
+    m_doc.reset();
+    m_path.clear();
+    m_sizes.clear();
+    m_currentPage = -1;
+    m_cache.clear();
+    m_textLayer.clear();
+    relayout();
+    Scroll(0, 0);
+}
+
 void PdfView::setZoom(double zoom)
 {
     applyZoom(zoom, ZoomMode::Custom, paneCenter());

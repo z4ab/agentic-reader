@@ -1,0 +1,229 @@
+# M6.2 acceptance, run 1 of 2: File > Open Project (Ctrl+Shift+O), the
+# project tree, opening a PDF from it, refresh after changes made outside the
+# app, an unsaved project and "Save as project", File > Recent Projects.
+# Run both runs with tests/acceptance/m6.2.sh, which builds the fixture in
+# /tmp/agentic-reader-m6.2, a scratch HOME and a logging fake sidecar
+# (tests/acceptance/m6.2-fake-sidecar.sh), and checks the sidecar log and the
+# .reader/ folders after each run. This run is
+#   scripts/shot.sh -o <out>/run1 -s tests/acceptance/m6.2.steps -- \
+#     env HOME=/tmp/agentic-reader-m6.2/home \
+#       READER_SIDECAR_CMD=<worktree>/tests/acceptance/m6.2-fake-sidecar.sh \
+#       READER_FAKE_LOG=/tmp/agentic-reader-m6.2/fake-run1.log \
+#       ./build/app/agentic-reader
+#
+# Fixture (F = /tmp/agentic-reader-m6.2), no .reader/ anywhere at the start:
+#   F/proj/alpha.pdf, beta.PDF      tests/data/sample.pdf (3 pages, "Page One")
+#   F/proj/notes.txt, readme.md     not PDFs
+#   F/proj/papers/long.pdf          tests/data/long.pdf (520 pages,
+#                                   "Page 1 of 520" heading)
+#   F/proj/papers/data.csv          not a PDF
+#   F/proj/papers/deep/nested.pdf   tests/data/color.pdf (1 small page)
+#   F/proj/empty/                   no files
+#   F/proj/misc/todo.txt            no PDF
+#   F/proj/.hidden/secret.pdf       hidden folder
+#   F/loose/single.pdf              sample.pdf, outside any project
+#   F/loose/other.txt               not a PDF
+#   F/src/sample.pdf, F/src/notes.txt   sources for the copies below
+#
+# Interface choices where the spec is silent (the implementer conforms or
+# files a TEST DISPUTE):
+#   - File menu, top to bottom: "&Open...\tCtrl+O", "Open &Project...\t
+#     Ctrl+Shift+O", the "&Recent" files submenu (M2.5), a "Recent Pro&jects"
+#     submenu, then "&Quit\tCtrl+Q". In an open File menu, J opens Recent
+#     Projects. Its items are numbered like Recent files: "&1 <name or path>",
+#     most recent first, so digit keys pick them.
+#   - Open Project shows a wxDirDialog (a GTK folder chooser). The steps press
+#     Alt+Home (GTK's "go to Home folder") first, because a chooser that starts
+#     in "Recent" ignores a typed location, then type the folder's absolute
+#     path into the location bar (Ctrl+L) with no trailing slash and press
+#     Return, which selects that folder. The space/Home/End trick is the one
+#     from tests/acceptance/m2.5.steps.
+#   - Opening a folder with Open Project makes it a saved project at once: its
+#     .reader/ exists right after the dialog closes. It goes to the top of
+#     Recent Projects.
+#   - A project (saved or unsaved) that becomes the open project sends
+#     `open_project {path}` once, with the folder's absolute path and no
+#     trailing slash. Opening a PDF that belongs to the open project sends
+#     none.
+#   - The project panel replaces the left "Project" placeholder (x 0..220,
+#     y 69..875 at 1400x900). It has a header at the top and below it a
+#     wxTreeCtrl that fills the rest of the pane, so (110, 700) is a blank
+#     point inside the tree. The tree's root is hidden (wxTR_HIDE_ROOT): its
+#     top-level rows are the project folder's entries. Every folder is shown
+#     expanded, after opening and after every refresh.
+#   - Tree content and order follow tests/test_project_panel.cpp: folders and
+#     PDFs only, folders without a PDF below are left out, hidden folders and
+#     .reader/ are skipped, subfolders before PDFs, each sorted by name.
+#   - Clicking the blank point focuses the tree. Home selects the first row,
+#     Down moves one row, Return activates the selected row
+#     (wxEVT_TREE_ITEM_ACTIVATED, the same as a double click). Activating a
+#     PDF opens it in the PDF pane like File > Open; activating a folder does
+#     not open anything.
+#   - Header: for a saved project it shows the project folder's name (here
+#     "proj" or "loose"), with no "Unsaved project" text and no button. For an
+#     unsaved project it says "Unsaved project" and has a wxButton labelled
+#     "&Save as project", so Alt+S presses it wherever the focus is in the
+#     main window. After saving, the header turns into the saved form.
+#   - A PDF opened outside any project (File > Open here) opens its folder as
+#     an unsaved project: the tree shows that folder, no .reader/ is created,
+#     and it is not added to Recent Projects. "Save as project" creates
+#     .reader/ and adds the folder to the top of Recent Projects.
+#   - Opening a project, from Recent Projects or at start, also opens its
+#     `open_file` when that file exists. When a project opens because a PDF
+#     was opened (File > Open, drop, Recent), that PDF is shown instead.
+#     Leaving a project (opening another
+#     one, or quitting) saves its `open_file` in .reader/project.json.
+#   - The refresh after a change outside the app shows within about 1 s
+#     (300 ms debounce). The steps wait 1 s plus shot.sh's 0.3 s per step.
+#     A folder created after the project opened is watched too.
+#
+# Geometry at 1400x900 (see m2.4.steps and m2.5.steps): menu bar y 0..27,
+# toolbar y 28..68, left pane x 0..220, PDF pane x 225..980 and y 69..875,
+# status bar y 876..900. Status field 0 (bottom left) is the open file's name.
+wait 3
+
+# Fresh start, no project yet (empty HOME): the left pane holds no tree rows
+# (an empty pane or a short hint), the PDF pane holds no document, status
+# field 0 does not name a file.
+shot start
+
+key ctrl+shift+o
+wait 2
+
+# Ctrl+Shift+O opened a GTK folder chooser over the window (a dialog to pick
+# a folder, with a sidebar of places and a Cancel button). It is not the
+# PDF file chooser: there is no "*.pdf" filter control.
+shot project-dialog
+
+key alt+Home
+wait 1
+key ctrl+l
+wait 1
+key space
+key Home
+run xdotool type --delay 0 /tmp/agentic-reader-m6.2/proj
+key End BackSpace
+wait 1
+key Return
+wait 3
+run test -d /tmp/agentic-reader-m6.2/proj/.reader
+
+# The dialog is closed and proj is the open, saved project. The header names
+# "proj" (no "Unsaved project", no button). The tree shows, top to bottom:
+# papers, deep (indented under papers), nested.pdf (under deep), long.pdf
+# (under papers), alpha.pdf, beta.PDF. Nothing else: no notes.txt,
+# readme.md, data.csv, empty, misc, .hidden, secret.pdf or .reader. The PDF
+# pane holds no document (proj has no open_file yet).
+shot project-open
+
+click 110 700
+key Home Down Down Return
+wait 3
+
+# Activating the third row opened papers/deep/nested.pdf: the PDF pane shows
+# color.pdf's single small coloured page, the toolbar entry reads "1 / 1",
+# status field 0 "nested.pdf". The tree is unchanged, nested.pdf may be
+# selected.
+shot tree-open-nested
+
+run cp /tmp/agentic-reader-m6.2/src/sample.pdf /tmp/agentic-reader-m6.2/proj/added.pdf
+run cp /tmp/agentic-reader-m6.2/src/notes.txt /tmp/agentic-reader-m6.2/proj/added.txt
+wait 1
+
+# A PDF added from outside appears: papers, deep, nested.pdf, long.pdf,
+# added.pdf, alpha.pdf, beta.PDF. added.txt does not appear. nested.pdf is
+# still open, status field 0 "nested.pdf".
+shot fs-added
+
+run mv /tmp/agentic-reader-m6.2/proj/alpha.pdf /tmp/agentic-reader-m6.2/proj/omega.pdf
+wait 1
+
+# The rename shows: papers, deep, nested.pdf, long.pdf, added.pdf, beta.PDF,
+# omega.pdf. No alpha.pdf.
+shot fs-renamed
+
+run rm /tmp/agentic-reader-m6.2/proj/beta.PDF
+wait 1
+
+# The removal shows: papers, deep, nested.pdf, long.pdf, added.pdf,
+# omega.pdf. No beta.PDF.
+shot fs-removed
+
+run mkdir /tmp/agentic-reader-m6.2/proj/fresh
+wait 1
+run cp /tmp/agentic-reader-m6.2/src/sample.pdf /tmp/agentic-reader-m6.2/proj/fresh/inside.pdf
+wait 1
+
+# A PDF added to a folder created after the project opened shows: fresh,
+# inside.pdf (under fresh), papers, deep, nested.pdf, long.pdf, added.pdf,
+# omega.pdf. nested.pdf is still open, status field 0 "nested.pdf".
+shot fs-new-folder
+
+key ctrl+o
+wait 2
+key alt+Home
+wait 1
+key ctrl+l
+wait 1
+key space
+key Home
+run xdotool type --delay 0 /tmp/agentic-reader-m6.2/loose/single.pdf
+key End BackSpace
+wait 1
+key Return
+wait 3
+run test ! -e /tmp/agentic-reader-m6.2/loose/.reader
+
+# A single PDF outside any project: single.pdf is open ("Page One", entry
+# "1 / 3", status field 0 "single.pdf"). The header says "Unsaved project"
+# and shows a "Save as project" button. The tree shows only single.pdf (no
+# other.txt). No .reader/ was created in loose/ (checked by the run step).
+shot unsaved-project
+
+wait 2
+run test ! -e /tmp/agentic-reader-m6.2/loose/.reader
+key alt+s
+wait 2
+run test -d /tmp/agentic-reader-m6.2/loose/.reader
+
+# "Save as project" created loose/.reader/ (checked by the run step). The
+# header now names "loose", without "Unsaved project" and without the button.
+# The tree still shows single.pdf, single.pdf is still open, status field 0
+# "single.pdf".
+shot saved-as-project
+
+key alt+f
+wait 1
+
+# The File menu is open: "Open..." with Ctrl+O, "Open Project..." with
+# Shift+Ctrl+O (GTK may write it as "Shift+Ctrl+O"), "Recent" with an arrow,
+# "Recent Projects" with an arrow, and "Quit" with Ctrl+Q.
+shot file-menu
+
+key j
+wait 1
+
+# File > Recent Projects lists, numbered, most recent first: 1 loose, 2 proj
+# (folder names or full paths). Nothing else: no papers, deep or fresh.
+shot recent-projects
+
+key 2
+wait 3
+
+# Recent Projects item 2 reopened proj and its open_file: the header names
+# "proj", the tree is as in fs-new-folder (fresh, inside.pdf, papers, deep,
+# nested.pdf, long.pdf, added.pdf, omega.pdf), nested.pdf is open (entry
+# "1 / 1", status field 0 "nested.pdf").
+shot recent-reopened
+
+click 110 700
+key Home Down Down Down Down Down Return
+wait 3
+
+# The sixth row, papers/long.pdf, is open: "Page 1 of 520" at the top of the
+# PDF pane, entry "1 / 520", status field 0 "long.pdf". tests/acceptance/
+# m6.2.sh checks that this shot exists.
+shot tree-open-long
+
+key ctrl+q
+wait 3

@@ -27,6 +27,8 @@ add_library(reader_core STATIC
     src/pdf/TextLayer.cpp
     src/pdf/ViewNav.cpp
     src/project/Project.cpp
+    src/project/ProjectPanel.cpp
+    src/project/ProjectTree.cpp
     src/settings/KeyTester.cpp
     src/settings/Settings.cpp
     src/settings/SettingsDialog.cpp

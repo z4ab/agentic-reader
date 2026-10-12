@@ -6,6 +6,9 @@
 #include "pdf/OpenPdf.h"
 #include "pdf/PdfEvents.h"
 #include "pdf/PdfView.h"
+#include "project/Project.h"
+#include "project/ProjectPanel.h"
+#include "project/ProjectTree.h"
 #include "settings/Settings.h"
 #include "settings/SettingsDialog.h"
 
@@ -13,12 +16,12 @@
 #include <wx/button.h>
 #include <wx/combobox.h>
 #include <wx/config.h>
+#include <wx/dirdlg.h>
 #include <wx/filedlg.h>
 #include <wx/filehistory.h>
 #include <wx/filename.h>
 #include <wx/menu.h>
 #include <wx/msgdlg.h>
-#include <wx/panel.h>
 #include <wx/sizer.h>
 #include <wx/splitter.h>
 #include <wx/stattext.h>
@@ -31,8 +34,11 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <tuple>
 #include <utility>
+
+namespace fs = std::filesystem;
 
 namespace
 {
@@ -50,6 +56,52 @@ constexpr int kRecentFileCount = 10;
 constexpr int kRecentFileIdBase = wxID_HIGHEST + 1;
 // wxConfig group of the recent files, saved as file1..file10.
 const char* const kRecentFilesPath = "/RecentFiles/";
+// File > Recent Projects, the same way, with the IDs after Recent's.
+constexpr int kRecentProjectCount = 10;
+constexpr int kRecentProjectIdBase = kRecentFileIdBase + kRecentFileCount;
+const char* const kRecentProjectsPath = "/RecentProjects/";
+// The project open at the last exit, saved or unsaved.
+const char* const kLastProjectKey = "/Session/LastProject";
+
+wxString toWx(const fs::path& path)
+{
+#ifdef _WIN32
+    return wxString(path.wstring());
+#else
+    return wxString::FromUTF8(path.string());
+#endif
+}
+
+// Absolute and lexically normal, without a trailing separator.
+fs::path normalPath(const wxString& path)
+{
+#ifdef _WIN32
+    fs::path p(path.ToStdWstring());
+#else
+    fs::path p(path.utf8_string());
+#endif
+    std::error_code ec;
+    p = fs::absolute(p, ec).lexically_normal();
+    if (p.has_relative_path() && !p.has_filename())
+        p = p.parent_path();
+    return p;
+}
+
+bool isSavedProject(const fs::path& root)
+{
+    std::error_code ec;
+    return fs::is_directory(root / ".reader", ec);
+}
+
+// `path` relative to `root` with '/' separators, or empty when it is not
+// below `root`.
+std::string relativeTo(const fs::path& path, const fs::path& root)
+{
+    const fs::path rel = path.lexically_relative(root);
+    if (rel.empty() || rel == "." || *rel.begin() == "..")
+        return {};
+    return rel.generic_string();
+}
 } // namespace
 
 MainFrame::MainFrame()
@@ -100,17 +152,142 @@ void MainFrame::openFile(const wxString& path)
         return;
     }
 
+    // A PDF of the open project keeps it and its chat. Any other PDF opens
+    // the saved project it belongs to, or its folder as an unsaved project.
+    // The project being left records its open file first.
+    const fs::path pdf = normalPath(fullPath);
+    const fs::path folder = projectFolderFor(pdf, m_projectRoot);
+    if (folder != m_projectRoot)
+        enterProject(folder, false);
+
     m_pdfView->setDocument(std::move(result.doc), std::move(result.password));
     m_fileHistory->AddFileToHistory(fullPath);
     saveFileHistory();
     showOpenedFile();
+    m_projectPanel->selectFile(relativeTo(pdf, m_projectRoot));
+    saveProjectState();
+}
 
-    // The PDF's folder is the project until M6 adds real projects. A file from
-    // the same folder keeps the current chat.
-    if (file.GetPath() != m_projectDir) {
-        m_projectDir = file.GetPath();
-        m_chat->openProject(m_projectDir.utf8_string());
+void MainFrame::restoreSession()
+{
+    const wxString last = wxConfigBase::Get()->Read(kLastProjectKey, wxString());
+    if (last.empty() || !wxFileName::DirExists(last))
+        return;
+    const fs::path root = normalPath(last);
+    if (isSavedProject(root)) {
+        openProjectFolder(root, false);
+        return;
     }
+    // An unsaved project keeps no open_file. The most recent file stands in
+    // when it belongs there.
+    if (m_fileHistory->GetCount() > 0) {
+        const wxString file = m_fileHistory->GetHistoryFile(0);
+        if (wxFileName::FileExists(file) && projectFolderFor(normalPath(file), {}) == root) {
+            openFile(file);
+            return;
+        }
+    }
+    enterProject(root, false);
+    closeFile();
+}
+
+void MainFrame::openProjectFolder(const fs::path& root, bool save)
+{
+    if (root == m_projectRoot) {
+        if (save && !m_project)
+            saveAsProject();
+        return;
+    }
+    enterProject(root, save);
+    if (m_project && !m_project->openFile().empty()) {
+        const fs::path file = root / fs::path(m_project->openFile());
+        std::error_code ec;
+        if (fs::is_regular_file(file, ec))
+            openFile(toWx(file));
+    }
+    // With no open_file, or one that failed to open, the PDF of the project
+    // left behind must not stay on screen.
+    if (relativeTo(m_pdfView->filePath(), m_projectRoot).empty())
+        closeFile();
+}
+
+void MainFrame::enterProject(const fs::path& root, bool save)
+{
+    saveProjectState();
+    m_project.reset();
+    m_projectRoot = root;
+
+    if (save || isSavedProject(root)) {
+        std::string error;
+        m_project = Project::open(root, error);
+        if (!m_project) {
+            wxMessageBox(wxString::Format("Cannot save \"%s\" as a project: %s.\n\n"
+                                          "It is open as an unsaved project.",
+                                          toWx(root.filename()), wxString::FromUTF8(error)),
+                         "Cannot Open Project", wxOK | wxICON_WARNING, this);
+        } else if (!m_project->warnings().empty()) {
+            wxString text;
+            for (const std::string& warning : m_project->warnings())
+                text += wxString::FromUTF8(warning) + "\n";
+            wxMessageBox(text, "Project", wxOK | wxICON_WARNING, this);
+        }
+    }
+
+    m_projectPanel->setProject(root, m_project != nullptr);
+    // A new project gets a new chat. An unsaved project's chats stay in
+    // memory only (M6.4 persists chats through m_project).
+    m_chat->openProject(toWx(root).utf8_string());
+    if (m_project)
+        addRecentProject();
+
+    wxConfigBase* config = wxConfigBase::Get();
+    config->Write(kLastProjectKey, toWx(root));
+    config->Flush();
+}
+
+void MainFrame::saveProjectState()
+{
+    if (!m_project || m_project->readOnly())
+        return;
+    const std::string rel = relativeTo(m_pdfView->filePath(), m_projectRoot);
+    if (rel.empty() || rel == m_project->openFile())
+        return;
+    m_project->setOpenFile(rel);
+    saveProject();
+}
+
+void MainFrame::saveProject()
+{
+    std::string error;
+    if (!m_project->save(error))
+        wxMessageBox(wxString::Format("Cannot save the project \"%s\": %s.",
+                                      toWx(m_projectRoot.filename()), wxString::FromUTF8(error)),
+                     "Cannot Save Project", wxOK | wxICON_ERROR, this);
+}
+
+void MainFrame::saveAsProject()
+{
+    if (m_projectRoot.empty() || m_project)
+        return;
+    std::string error;
+    m_project = Project::open(m_projectRoot, error);
+    if (!m_project) {
+        wxMessageBox(wxString::Format("Cannot save \"%s\" as a project: %s.",
+                                      toWx(m_projectRoot.filename()), wxString::FromUTF8(error)),
+                     "Cannot Save Project", wxOK | wxICON_ERROR, this);
+        return;
+    }
+    // The chat goes on. M6.4 starts persisting it from here.
+    m_projectPanel->setSaved(true);
+    addRecentProject();
+    m_project->setOpenFile(relativeTo(m_pdfView->filePath(), m_projectRoot));
+    saveProject();
+}
+
+void MainFrame::addRecentProject()
+{
+    m_projectHistory->AddFileToHistory(toWx(m_projectRoot));
+    saveProjectHistory();
 }
 
 void MainFrame::showOpenedFile()
@@ -124,12 +301,33 @@ void MainFrame::showOpenedFile()
     m_pdfView->SetFocus();
 }
 
+void MainFrame::closeFile()
+{
+    m_pdfView->closeDocument();
+    m_projectPanel->selectFile(std::string());
+    SetStatusText("Ready", kFileField);
+    m_pageTotal->SetLabel("/ 0");
+    GetToolBar()->Realize();
+    showPage();
+    showZoom();
+}
+
 void MainFrame::saveFileHistory()
 {
     wxConfigBase* config = wxConfigBase::Get();
     {
         wxConfigPathChanger group(config, kRecentFilesPath);
         m_fileHistory->Save(*config);
+    }
+    config->Flush();
+}
+
+void MainFrame::saveProjectHistory()
+{
+    wxConfigBase* config = wxConfigBase::Get();
+    {
+        wxConfigPathChanger group(config, kRecentProjectsPath);
+        m_projectHistory->Save(*config);
     }
     config->Flush();
 }
@@ -160,8 +358,12 @@ void MainFrame::buildMenuBar()
 {
     auto* fileMenu = new wxMenu();
     fileMenu->Append(wxID_OPEN, "&Open...\tCtrl+O");
+    const int openProjectId = wxWindow::NewControlId();
+    fileMenu->Append(openProjectId, "Open &Project...\tCtrl+Shift+O");
     auto* recentMenu = new wxMenu();
     fileMenu->AppendSubMenu(recentMenu, "&Recent");
+    auto* recentProjectsMenu = new wxMenu();
+    fileMenu->AppendSubMenu(recentProjectsMenu, "Recent Pro&jects");
     fileMenu->AppendSeparator();
     fileMenu->Append(wxID_EXIT, "&Quit\tCtrl+Q");
 
@@ -171,6 +373,13 @@ void MainFrame::buildMenuBar()
         wxConfigBase* config = wxConfigBase::Get();
         wxConfigPathChanger group(config, kRecentFilesPath);
         m_fileHistory->Load(*config);
+    }
+    m_projectHistory = std::make_unique<wxFileHistory>(kRecentProjectCount, kRecentProjectIdBase);
+    m_projectHistory->UseMenu(recentProjectsMenu);
+    {
+        wxConfigBase* config = wxConfigBase::Get();
+        wxConfigPathChanger group(config, kRecentProjectsPath);
+        m_projectHistory->Load(*config);
     }
 
     // On macOS wx moves wxID_PREFERENCES to the app menu.
@@ -189,6 +398,9 @@ void MainFrame::buildMenuBar()
     Bind(wxEVT_MENU, &MainFrame::onOpen, this, wxID_OPEN);
     Bind(wxEVT_MENU, &MainFrame::onRecent, this, kRecentFileIdBase,
          kRecentFileIdBase + kRecentFileCount - 1);
+    Bind(wxEVT_MENU, &MainFrame::onOpenProject, this, openProjectId);
+    Bind(wxEVT_MENU, &MainFrame::onRecentProject, this, kRecentProjectIdBase,
+         kRecentProjectIdBase + kRecentProjectCount - 1);
     Bind(wxEVT_MENU, &MainFrame::onQuit, this, wxID_EXIT);
     Bind(wxEVT_MENU, &MainFrame::onAbout, this, wxID_ABOUT);
     Bind(wxEVT_MENU, &MainFrame::onPreferences, this, wxID_PREFERENCES);
@@ -239,11 +451,14 @@ void MainFrame::buildLayout()
     outer->SetMinimumPaneSize(kMinPaneWidth);
     inner->SetMinimumPaneSize(kMinPaneWidth);
 
-    wxPanel* left = makePane(outer, "Project");
+    m_projectPanel = new ProjectPanel(outer);
+    m_projectPanel->Bind(EVT_PROJECT_FILE_ACTIVATED, &MainFrame::onProjectFileActivated, this);
+    m_projectPanel->Bind(EVT_PROJECT_SAVE_REQUESTED, &MainFrame::onSaveAsProject, this);
+    m_projectPanel->Bind(EVT_PROJECT_PATH_DROPPED, &MainFrame::onPathDropped, this);
     m_pdfView = new PdfView(inner);
     m_pdfView->Bind(EVT_PDF_PAGE_CHANGED, &MainFrame::onPdfPageChanged, this);
     m_pdfView->Bind(EVT_PDF_ZOOM_CHANGED, &MainFrame::onPdfZoomChanged, this);
-    m_pdfView->Bind(EVT_PDF_FILE_DROPPED, &MainFrame::onFileDropped, this);
+    m_pdfView->Bind(EVT_PDF_FILE_DROPPED, &MainFrame::onPathDropped, this);
     m_chat = new ChatPanel(inner, *m_sidecar);
 
     // Resizing the window grows or shrinks only the center pane.
@@ -251,20 +466,7 @@ void MainFrame::buildLayout()
     inner->SetSashGravity(1.0);
 
     inner->SplitVertically(m_pdfView, m_chat, -kRightPaneWidth);
-    outer->SplitVertically(left, inner, kLeftPaneWidth);
-}
-
-wxPanel* MainFrame::makePane(wxWindow* parent, const wxString& label)
-{
-    auto* panel = new wxPanel(parent);
-    auto* text = new wxStaticText(panel, wxID_ANY, label);
-
-    auto* sizer = new wxBoxSizer(wxVERTICAL);
-    sizer->AddStretchSpacer();
-    sizer->Add(text, 0, wxALIGN_CENTER_HORIZONTAL);
-    sizer->AddStretchSpacer();
-    panel->SetSizer(sizer);
-    return panel;
+    outer->SplitVertically(m_projectPanel, inner, kLeftPaneWidth);
 }
 
 void MainFrame::onOpen(wxCommandEvent& /*event*/)
@@ -292,9 +494,49 @@ void MainFrame::onRecent(wxCommandEvent& event)
     }
 }
 
-void MainFrame::onFileDropped(wxCommandEvent& event)
+void MainFrame::onOpenProject(wxCommandEvent& /*event*/)
+{
+    wxDirDialog dialog(this, "Open Project", toWx(m_projectRoot),
+                       wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
+    if (dialog.ShowModal() == wxID_OK)
+        openProjectFolder(normalPath(dialog.GetPath()), true);
+}
+
+void MainFrame::onRecentProject(wxCommandEvent& event)
+{
+    const auto index = static_cast<size_t>(event.GetId() - kRecentProjectIdBase);
+    if (index >= m_projectHistory->GetCount())
+        return;
+    const wxString path = m_projectHistory->GetHistoryFile(index);
+    if (!wxFileName::DirExists(path)) {
+        wxMessageBox(wxString::Format("Cannot open project \"%s\": folder not found.", path),
+                     "Cannot Open Project", wxOK | wxICON_ERROR, this);
+        m_projectHistory->RemoveFileFromHistory(index);
+        saveProjectHistory();
+        return;
+    }
+    openProjectFolder(normalPath(path), true);
+}
+
+void MainFrame::onPathDropped(wxCommandEvent& event)
+{
+    // A dropped folder opens as a project, like Open Project. A file opens
+    // like File > Open, wherever it lands.
+    const wxString path = event.GetString();
+    if (wxFileName::DirExists(path))
+        openProjectFolder(normalPath(path), true);
+    else
+        openFile(path);
+}
+
+void MainFrame::onProjectFileActivated(wxCommandEvent& event)
 {
     openFile(event.GetString());
+}
+
+void MainFrame::onSaveAsProject(wxCommandEvent& /*event*/)
+{
+    saveAsProject();
 }
 
 void MainFrame::onQuit(wxCommandEvent& /*event*/)
@@ -304,6 +546,7 @@ void MainFrame::onQuit(wxCommandEvent& /*event*/)
 
 void MainFrame::onClose(wxCloseEvent& event)
 {
+    saveProjectState();
     m_sidecar->shutdown();
     event.Skip();
 }

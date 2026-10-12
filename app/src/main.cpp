@@ -14,8 +14,11 @@ public:
         auto* frame = new MainFrame();
         frame->Show();
         // Opened once the window is on screen, so an error box has a visible parent.
+        // The project panel's file watcher needs the running event loop.
         if (!m_pdfPath.empty())
             frame->CallAfter([frame, path = m_pdfPath] { frame->openFile(path); });
+        else
+            frame->CallAfter([frame] { frame->restoreSession(); });
         return true;
     }
 

@@ -47,6 +47,10 @@ add_executable(test_project test_project.cpp)
 target_link_libraries(test_project PRIVATE doctest::doctest nlohmann_json::nlohmann_json reader_core)
 add_test(NAME project COMMAND test_project)
 
+add_executable(test_project_panel test_project_panel.cpp)
+target_link_libraries(test_project_panel PRIVATE doctest::doctest reader_core)
+add_test(NAME project_panel COMMAND test_project_panel)
+
 add_executable(test_project_transcript test_project_transcript.cpp)
 target_link_libraries(test_project_transcript PRIVATE doctest::doctest reader_core)
 add_test(NAME project_transcript COMMAND test_project_transcript)
