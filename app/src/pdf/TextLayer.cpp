@@ -38,6 +38,26 @@ int TextLayer::boxAt(int page, PointPts pointPts) const
     return -1;
 }
 
+int TextLayer::nearestBox(int page, PointPts pointPts) const
+{
+    const std::vector<TextBox>* list = boxes(page);
+    if (!list)
+        return -1;
+    int best = -1;
+    double bestDistance = 0;
+    for (std::size_t i = 0; i < list->size(); ++i) {
+        const RectPts& r = (*list)[i].bbox;
+        const double dx = std::max({r.x - pointPts.x, 0.0, pointPts.x - (r.x + r.w)});
+        const double dy = std::max({r.y - pointPts.y, 0.0, pointPts.y - (r.y + r.h)});
+        const double distance = dx * dx + dy * dy;
+        if (best < 0 || distance < bestDistance) {
+            best = static_cast<int>(i);
+            bestDistance = distance;
+        }
+    }
+    return best;
+}
+
 std::string TextLayer::textBetween(int page, int fromIdx, int toIdx) const
 {
     const std::vector<TextBox>* list = boxes(page);
@@ -55,15 +75,17 @@ std::string TextLayer::textBetween(int page, int fromIdx, int toIdx) const
     for (int i = fromIdx; i <= toIdx; ++i) {
         const TextBox& box = (*list)[static_cast<std::size_t>(i)];
         out += box.text;
-        if (i == toIdx)
-            break;
-        const RectPts& next = (*list)[static_cast<std::size_t>(i) + 1].bbox;
-        const double baseline = box.bbox.y + box.bbox.h;
-        const double nextBaseline = next.y + next.h;
-        if (nextBaseline - baseline > box.bbox.h / 2)
-            out += '\n';
-        else if (box.hasSpaceAfter)
-            out += ' ';
+        if (i < toIdx)
+            out += separator(box, (*list)[static_cast<std::size_t>(i) + 1]);
     }
     return out;
+}
+
+std::string_view TextLayer::separator(const TextBox& a, const TextBox& b)
+{
+    const double baseline = a.bbox.y + a.bbox.h;
+    const double nextBaseline = b.bbox.y + b.bbox.h;
+    if (nextBaseline - baseline > a.bbox.h / 2 || nextBaseline <= a.bbox.y)
+        return "\n";
+    return a.hasSpaceAfter ? " " : "";
 }

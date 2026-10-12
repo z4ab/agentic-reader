@@ -1,0 +1,161 @@
+# M3.2 acceptance, session 1 of 3: selection and copy on tests/data/sample.pdf
+# (3 US Letter pages; page 1 has the heading "Page One", a 3-line paragraph
+# "The quick brown fox ... exists to / test PDF loading, ... Marker / word:
+# zebra." and the page number "1"; page 2 starts "Page Two" / "Attention is all
+# you need."). Run all three sessions with tests/acceptance/m3.2.sh, which
+# builds the clipboard reader and writes the expected texts that each
+# `run .../clipcheck <name>` compares the clipboard with (exact bytes). This
+# session is
+#   scripts/shot.sh -o <out>/sample -s tests/acceptance/m3.2.steps -- \
+#     env HOME=/tmp/agentic-reader-m3.2/home ./build/app/agentic-reader tests/data/sample.pdf
+#
+# Interface choices where the spec is silent (see also tests/test_selection.cpp):
+#   - A drag selects every box from the box under the press to the box under the
+#     release, in reading order, either direction. Double-click selects the word
+#     under the pointer, triple-click its line. A click (no drag) on empty page
+#     space or the grey margin clears the selection.
+#   - Copied text joins words with a space where the PDF has one, lines with
+#     "\n", pages with "\n", and nothing after the last word.
+#   - Right-click opens the context menu without changing the selection. Its
+#     first item is "&Copy" (wxID_COPY, may show "Ctrl+C"), enabled only with a
+#     selection. The steps pick it by its mnemonic: `key c` while the menu is open.
+#   - Ctrl+C (or Copy) with no selection leaves the clipboard unchanged.
+#   - The highlight is the theme's selection colour at 35% alpha over the words'
+#     boxes, so the words stay readable through it. Under Xvfb's default GTK theme
+#     that is a light blue.
+#   - The I-beam cursor over text is not visible in screenshots (import does not
+#     capture the pointer). human check: hover over text and over the margin.
+#
+# Geometry at the default window (1400x900 at the screen origin), measured on
+# the M3.1 build: menu bar y 0..24, toolbar y 25..66 (zoom combo at (35,45)),
+# PDF pane x 225..980 and y 67..877. At fit width ("119%", zoom 731/612) page 1
+# is at x 237..967 and its top edge at y 79, so a point (x, y) in page points is
+# at (237 + 1.1944 x, 79 + 1.1944 y). Word centres used below: "The" (381,271),
+# "quick" (413,271), "brown" (451,271), "rendering," (513,289), "zebra."
+# (428,306). If the toolbar height differs, every y shifts by the same amount.
+wait 3
+
+# Focus the PDF view with a click on empty page space below the paragraph.
+click 600 600
+wait 1
+
+# Start: page 1 of sample.pdf at fit width, combo "119%", entry "1 / 3".
+# Nothing is highlighted.
+shot start
+
+drag 375 271 430 306
+wait 1
+
+# Drag from "The" to "zebra.": the whole paragraph is highlighted, all of line
+# 1 ("The" .. "to"), all of line 2 ("test" .. "Marker") and line 3 "word:
+# zebra.", with a translucent light-blue fill over each word box (gaps between
+# words may or may not be filled). The black text is clearly readable through
+# the fill. "Page One" and the page number are not highlighted.
+shot drag-paragraph
+
+key ctrl+c
+wait 1
+run /tmp/agentic-reader-m3.2/clipcheck paragraph
+
+dblclick 451 271
+wait 1
+
+# Double-click on "brown": only the word "brown" is highlighted. The paragraph
+# highlight is gone.
+shot dblclick-word
+
+key ctrl+c
+wait 1
+run /tmp/agentic-reader-m3.2/clipcheck word
+
+tripleclick 513 289
+wait 1
+
+# Triple-click on "rendering,": the whole second line of the paragraph, "test
+# PDF loading, rendering, and text extraction in Agentic Reader. Marker", is
+# highlighted, and nothing on lines 1 and 3. "brown" is no longer highlighted.
+shot tripleclick-line
+
+key ctrl+c
+wait 1
+run /tmp/agentic-reader-m3.2/clipcheck line
+
+drag 430 306 413 271
+wait 1
+
+# Backward drag from "zebra." up to "quick": the paragraph from "quick" to
+# "zebra." is highlighted; "The" at the start of line 1 is not.
+shot drag-backward
+
+click 451 271 3
+wait 1
+
+# Right-click on "brown" inside the selection: a popup menu at the pointer whose
+# first item is "Copy" (enabled, black text; it may show "Ctrl+C"). The
+# highlight from "quick" to "zebra." is unchanged where the menu does not cover it.
+shot context-menu
+
+key c
+wait 1
+run /tmp/agentic-reader-m3.2/clipcheck backward-menu
+
+click 600 600
+wait 1
+
+# Click on empty page space: the menu is gone and nothing is highlighted.
+shot cleared
+
+# Ctrl+C with no selection keeps the last copied text.
+key ctrl+c
+wait 1
+run /tmp/agentic-reader-m3.2/clipcheck backward-menu
+
+click 600 600 3
+wait 1
+
+# Right-click with no selection: the popup menu shows "Copy" greyed out
+# (disabled). Nothing is highlighted.
+shot context-menu-disabled
+
+key Escape
+wait 1
+
+# Cross-page selection at 60%: two pages in view. Page rects at 60% are
+# 367x475px, x 419..785; page 1 from y 79, page 2 from y 566 after Home.
+# "zebra." is at (515,193) on page 1, "Attention" at (500,663) on page 2.
+click 35 45
+key ctrl+a
+type 60
+key Return
+wait 2
+click 300 400
+key Home
+wait 2
+
+# Combo "60%". Page 1 (x 419..785, y 79..553) with "Page One" and the
+# paragraph, then the grey gap, then page 2 from y 566 with "Page Two" and
+# "Attention is all you need." Nothing is highlighted.
+shot zoom-60
+
+drag 515 193 500 663
+wait 1
+
+# Drag from "zebra." on page 1 to "Attention" on page 2: highlighted are
+# "zebra." and the page number "1" on page 1, and "Page Two" and "Attention" on
+# page 2. Nothing else ("word:", "is all you need.") is highlighted. Each
+# highlight sits exactly on its word at this zoom.
+shot cross-page
+
+key ctrl+c
+wait 1
+run /tmp/agentic-reader-m3.2/clipcheck cross-page
+
+# Zoom back to fit width with the selection kept.
+key ctrl+0
+key Home
+wait 2
+
+# Fit width ("119%"), page 1 at the top. The highlight followed the zoom: it
+# covers exactly "zebra." on line 3 (at about x 409..446, y 299..312). The page
+# number "1" (about y 908) is below the pane. No highlight anywhere else.
+shot selection-after-zoom

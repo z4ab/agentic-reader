@@ -4,6 +4,7 @@
 #include "pdf/PdfDocument.h"
 
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -24,12 +25,20 @@ public:
     // Index of the box whose bbox contains the point, or -1 for no box or a page
     // not loaded.
     int boxAt(int page, PointPts pointPts) const;
+    // Index of the box closest to the point (0 distance inside a box), or -1 for a
+    // page not loaded or without boxes.
+    int nearestBox(int page, PointPts pointPts) const;
 
-    // Text of boxes fromIdx..toIdx, both included. A backward range is swapped and
-    // indices are clamped to the page's boxes ("" when the range misses them). Boxes are joined with "\n" when the
-    // next baseline is lower by more than half the line height, else with " " when
-    // the box has a space after it. "" for a page not loaded.
+    // Text of boxes fromIdx..toIdx, both included, joined by separator(). A
+    // backward range is swapped and indices are clamped to the page's boxes ("" when
+    // the range misses them). "" for a page not loaded.
     std::string textBetween(int page, int fromIdx, int toIdx) const;
+
+    // What goes between box a and the next box b of the same page: "\n" when b's
+    // baseline is lower than a's by more than half a's height, or when b lies
+    // entirely above a (the jump from the bottom of one column to the top of the
+    // next). Otherwise " " when a has a space after it, else "".
+    static std::string_view separator(const TextBox& a, const TextBox& b);
 
 private:
     std::unordered_map<int, std::vector<TextBox>> m_pages;

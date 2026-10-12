@@ -3,8 +3,12 @@
 #include "pdf/PdfDocument.h"
 #include "pdf/RenderWorker.h"
 
+#include <wx/clipbrd.h>
+#include <wx/dataobj.h>
 #include <wx/dcbuffer.h>
 #include <wx/dnd.h>
+#include <wx/graphics.h>
+#include <wx/menu.h>
 #include <wx/settings.h>
 #include <wx/textdlg.h>
 
@@ -16,6 +20,7 @@
 wxDEFINE_EVENT(EVT_PDF_PAGE_CHANGED, wxCommandEvent);
 wxDEFINE_EVENT(EVT_PDF_ZOOM_CHANGED, wxCommandEvent);
 wxDEFINE_EVENT(EVT_PDF_FILE_DROPPED, wxCommandEvent);
+wxDEFINE_EVENT(EVT_PDF_SELECTION_CHANGED, wxCommandEvent);
 
 namespace {
 // One mouse wheel line. Scrolling itself is per pixel (scroll rate 1).
@@ -24,6 +29,12 @@ constexpr int kWheelLineStep = 20;
 constexpr int kArrowStep = 40;
 const wxColour kBackground(0x80, 0x80, 0x80);
 const wxColour kBorder(0x40, 0x40, 0x40);
+// 35% of 255: the selection highlight's alpha over the system highlight colour.
+constexpr unsigned char kHighlightAlpha = 89;
+// Pointer travel in pixels before a left press becomes a drag.
+constexpr int kDragThreshold = 3;
+// How far a click may land from the double-click and still be a triple-click.
+constexpr int kMultiClickSlop = 4;
 
 // Queues EVT_PDF_FILE_DROPPED on the view for the first dropped file.
 class FileDropTarget : public wxFileDropTarget
@@ -62,6 +73,12 @@ PdfView::PdfView(wxWindow* parent)
     Bind(wxEVT_KEY_DOWN, &PdfView::onKeyDown, this);
     Bind(wxEVT_MOUSEWHEEL, &PdfView::onMouseWheel, this);
     Bind(wxEVT_LEFT_DOWN, &PdfView::onLeftDown, this);
+    Bind(wxEVT_LEFT_DCLICK, &PdfView::onLeftDClick, this);
+    Bind(wxEVT_LEFT_UP, &PdfView::onLeftUp, this);
+    Bind(wxEVT_MOTION, &PdfView::onMotion, this);
+    Bind(wxEVT_MOUSE_CAPTURE_LOST, &PdfView::onCaptureLost, this);
+    Bind(wxEVT_CONTEXT_MENU, &PdfView::onContextMenu, this);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { copySelection(); }, wxID_COPY);
     Bind(wxEVT_SCROLLWIN_TOP, &PdfView::onScrollWin, this);
     Bind(wxEVT_SCROLLWIN_BOTTOM, &PdfView::onScrollWin, this);
     Bind(wxEVT_SCROLLWIN_LINEUP, &PdfView::onScrollWin, this);
@@ -88,7 +105,9 @@ void PdfView::setDocument(std::unique_ptr<PdfDocument> doc, std::string password
         m_sizes.push_back({pts.x, pts.y});
     }
     m_currentPage = -1;
+    endDrag();
     ++m_generation;
+    m_documentGeneration = m_generation;
     m_worker.reset();
     m_worker = std::make_unique<RenderWorker>(this, m_path, std::move(password));
     m_cache.clear();
@@ -97,15 +116,97 @@ void PdfView::setDocument(std::unique_ptr<PdfDocument> doc, std::string password
         m_zoom = fitZoom(m_zoomMode);
     relayout();
     scrollToOrigin(0, 0);
+    setSelection(std::nullopt);
     sendZoomChanged();
+}
+
+std::optional<SelectionInfo> PdfView::selection() const
+{
+    if (!m_selection)
+        return std::nullopt;
+    return m_selection->info(m_textLayer);
+}
+
+void PdfView::clearSelection()
+{
+    setSelection(std::nullopt);
+}
+
+void PdfView::copySelection()
+{
+    if (!m_selection)
+        return;
+    const std::string text = m_selection->text(m_textLayer);
+    if (text.empty())
+        return;
+    wxClipboardLocker lock;
+    if (!lock)
+        return;
+    wxTheClipboard->SetData(new wxTextDataObject(wxString::FromUTF8(text)));
+}
+
+void PdfView::setContextMenuHook(std::function<void(wxMenu&)> hook)
+{
+    m_contextMenuHook = std::move(hook);
+}
+
+void PdfView::setSelection(std::optional<Selection> selection)
+{
+    const bool same = selection.has_value() == m_selection.has_value() &&
+                      (!selection || (selection->start() == m_selection->start() &&
+                                      selection->end() == m_selection->end()));
+    if (same)
+        return;
+    m_selection = selection;
+    Refresh();
+
+    wxCommandEvent event(EVT_PDF_SELECTION_CHANGED, GetId());
+    event.SetEventObject(this);
+    ProcessWindowEvent(event);
+}
+
+std::optional<TextPos> PdfView::textPosAt(wxPoint client, bool nearest) const
+{
+    if (!m_doc)
+        return std::nullopt;
+    const wxPoint v = CalcUnscrolledPosition(client);
+    ViewPoint point{v.x, v.y};
+    if (nearest) {
+        // Beside a page: snap into it horizontally, so a drag into the margin
+        // still selects to the line's end.
+        const int page = m_layout.pageAt(point.y);
+        if (page >= 0) {
+            const PageRect r = m_layout.pageRect(page);
+            point.x = std::clamp(point.x, r.x, r.x + r.w - 1);
+        }
+    }
+    const PagePoint hit = m_layout.viewToPage(point);
+    if (hit.page < 0)
+        return std::nullopt;
+    const int box = nearest ? m_textLayer.nearestBox(hit.page, hit.pt)
+                            : m_textLayer.boxAt(hit.page, hit.pt);
+    if (box < 0)
+        return std::nullopt;
+    return TextPos{hit.page, box};
+}
+
+void PdfView::endDrag()
+{
+    m_dragAnchor.reset();
+    m_dragging = false;
+    if (HasCapture())
+        ReleaseMouse();
 }
 
 void PdfView::closeDocument()
 {
     if (!m_doc)
         return;
+    endDrag();
+    setSelection(std::nullopt);
     // Results already queued from the old worker carry the old generation.
     ++m_generation;
+    m_documentGeneration = m_generation;
     m_worker.reset();
     m_doc.reset();
     m_path.clear();
@@ -302,6 +403,9 @@ void PdfView::onKeyDown(wxKeyEvent& event)
         case 'G':
             showGoToPageDialog();
             return;
+        case 'C':
+            copySelection();
+            return;
         default:
             event.Skip();
             return;
@@ -386,6 +490,97 @@ void PdfView::onLeftDown(wxMouseEvent& event)
 {
     SetFocus();
     event.Skip();
+    const wxPoint p = event.GetPosition();
+
+    // wxGTK reports the third click of a triple-click as a plain press (sometimes
+    // two), so recognize it by its distance in time and space from the double-click.
+    int interval = wxSystemSettings::GetMetric(wxSYS_DCLICK_MSEC, this);
+    if (interval <= 0)
+        interval = 500;
+    const long sinceDClick = event.GetTimestamp() - m_lastDClickTime;
+    if (m_lastDClickTime != 0 && sinceDClick >= 0 && sinceDClick <= interval &&
+        std::abs(p.x - m_lastDClickPos.x) <= kMultiClickSlop &&
+        std::abs(p.y - m_lastDClickPos.y) <= kMultiClickSlop) {
+        endDrag();
+        if (const std::optional<TextPos> pos = textPosAt(p, false))
+            setSelection(Selection::line(m_textLayer, *pos));
+        return;
+    }
+
+    // A click clears the selection. A drag from here makes a new one.
+    setSelection(std::nullopt);
+    endDrag();
+    m_dragAnchor = textPosAt(p, true);
+    m_dragStart = p;
+    if (m_dragAnchor)
+        CaptureMouse();
+}
+
+void PdfView::onLeftDClick(wxMouseEvent& event)
+{
+    SetFocus();
+    endDrag();
+    m_lastDClickTime = event.GetTimestamp();
+    m_lastDClickPos = event.GetPosition();
+    if (const std::optional<TextPos> pos = textPosAt(event.GetPosition(), false))
+        setSelection(Selection::word(*pos));
+    else
+        setSelection(std::nullopt);
+}
+
+void PdfView::onLeftUp(wxMouseEvent& event)
+{
+    endDrag();
+    event.Skip();
+}
+
+void PdfView::onMotion(wxMouseEvent& event)
+{
+    event.Skip();
+    const wxPoint p = event.GetPosition();
+
+    const bool overText = textPosAt(p, false).has_value();
+    if (overText != m_overText) {
+        m_overText = overText;
+        SetCursor(overText ? wxCursor(wxCURSOR_IBEAM) : wxNullCursor);
+    }
+
+    if (!m_dragAnchor || !event.LeftIsDown())
+        return;
+    if (!m_dragging && std::abs(p.x - m_dragStart.x) < kDragThreshold &&
+        std::abs(p.y - m_dragStart.y) < kDragThreshold)
+        return;
+    m_dragging = true;
+
+    // Dragging above or below the pane scrolls toward the pointer.
+    if (p.y < 0)
+        scrollByPixels(0, p.y);
+    else if (p.y >= m_viewport.y)
+        scrollByPixels(0, p.y - m_viewport.y + 1);
+
+    if (const std::optional<TextPos> pos = textPosAt(p, true))
+        setSelection(Selection(*m_dragAnchor, *pos));
+}
+
+void PdfView::onCaptureLost(wxMouseCaptureLostEvent& /*event*/)
+{
+    m_dragAnchor.reset();
+    m_dragging = false;
+}
+
+void PdfView::onContextMenu(wxContextMenuEvent& event)
+{
+    wxMenu menu;
+    menu.Append(wxID_COPY, "&Copy\tCtrl+C");
+    menu.Enable(wxID_COPY, m_selection.has_value());
+    if (m_contextMenuHook)
+        m_contextMenuHook(menu);
+
+    // From the keyboard the position is unset and the menu opens at the pointer.
+    wxPoint pos = event.GetPosition();
+    if (pos != wxDefaultPosition)
+        pos = ScreenToClient(pos);
+    PopupMenu(&menu, pos);
 }
 
 void PdfView::onScrollWin(wxScrollWinEvent& event)
@@ -455,16 +650,53 @@ void PdfView::onPaint(wxPaintEvent& /*event*/)
         }
     }
     m_worker->setRequests(std::move(wanted));
+
+    if (m_selection) {
+        std::unique_ptr<wxGraphicsContext> gc(wxGraphicsContext::Create(dc));
+        if (gc)
+            paintSelection(*gc, visible);
+    }
+}
+
+void PdfView::paintSelection(wxGraphicsContext& gc, const std::vector<int>& visible)
+{
+    const wxColour system = wxSystemSettings::GetColour(wxSYS_COLOUR_HIGHLIGHT);
+    gc.SetPen(*wxTRANSPARENT_PEN);
+    gc.SetBrush(wxBrush(wxColour(system.Red(), system.Green(), system.Blue(), kHighlightAlpha)));
+
+    // One path for all boxes, filled with the winding rule, so overlapping box
+    // edges are not painted twice.
+    wxGraphicsPath path = gc.CreatePath();
+    const TextPos start = m_selection->start();
+    const TextPos end = m_selection->end();
+    for (int page : visible) {
+        if (page < start.page || page > end.page)
+            continue;
+        const std::vector<TextBox>* boxes = m_textLayer.boxes(page);
+        if (!boxes || boxes->empty())
+            continue;
+        const int last = static_cast<int>(boxes->size()) - 1;
+        const int from = std::max(page == start.page ? start.boxIndex : 0, 0);
+        const int to = std::min(page == end.page ? end.boxIndex : last, last);
+        for (int i = from; i <= to; ++i) {
+            const RectPts& box = (*boxes)[static_cast<std::size_t>(i)].bbox;
+            const PageRect r = m_layout.pageToView(page, box);
+            path.AddRectangle(r.x, r.y, r.w, r.h);
+        }
+    }
+    gc.FillPath(path, wxWINDING_RULE);
 }
 
 void PdfView::onPageRendered(wxThreadEvent& event)
 {
     auto result = event.GetPayload<RenderResult>();
-    if (result.generation != m_generation)
+    // From a document shown before this one.
+    if (result.generation < m_documentGeneration)
         return;
+    // Text does not depend on the render scale, so keep it even from a stale result.
     if (result.textBoxes)
         m_textLayer.setBoxes(result.page, std::move(*result.textBoxes));
-    if (!result.image.IsOk())
+    if (result.generation != m_generation || !result.image.IsOk())
         return;
 
     // Logical size equals the page rect, physical pixels stay at full DPI.

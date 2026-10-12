@@ -1,0 +1,97 @@
+# M3.2 acceptance, session 2 of 3: selection and copy on tests/data/twocol.pdf
+# (one US Letter page from tests/data/make_twocol_pdf.py: the heading "Two
+# Column Sample", then two columns of four lines each:
+#     Alpha starts the left column and       Bravo opens the right column and
+#     its words run down a narrow strip      a reader meets it only after the
+#     of the page until the left side        left column is done, so it closes
+#     comes to an end at omega.              the page here at zulu.
+# Poppler reads the heading, the whole left column, then the right column.
+# Run through tests/acceptance/m3.2.sh, which compares each clipboard read with
+# the expected text. This session is
+#   scripts/shot.sh -o <out>/twocol -s tests/acceptance/m3.2-twocol.steps -- \
+#     env HOME=/tmp/agentic-reader-m3.2/home ./build/app/agentic-reader tests/data/twocol.pdf
+#
+# Interface choices and geometry as in tests/acceptance/m3.2.steps. At fit width
+# ("119%") page points (x, y) are at (237 + 1.1944 x, 79 + 1.1944 y). The
+# columns span about x 323..507 and 624..803, lines at y 209, 226, 243 and 260.
+# Word centres used below: "Alpha" (340,209), "Bravo" (641,209), "opens"
+# (680,209), "reader" (654,226), "end" (409,260), "omega." (460,260),
+# "zulu." (737,260).
+#
+# The column jump: "omega." ends the left column low on the page and "Bravo"
+# starts the right column high up. Copied text must break the line there
+# ("omega.\nBravo"), never run them together ("omega.Bravo").
+wait 3
+
+# Focus the PDF view with a click on empty page space.
+click 600 600
+wait 1
+
+# Start: twocol.pdf at fit width, combo "119%", entry "1 / 1". The heading
+# and both columns are visible. Nothing is highlighted.
+shot start
+
+drag 340 209 737 260
+wait 1
+
+# Drag from "Alpha" to "zulu.": every word of both columns is highlighted with
+# the translucent light-blue fill, the text readable through it. The heading
+# "Two Column Sample" is not highlighted.
+shot drag-both-columns
+
+key ctrl+c
+wait 1
+run /tmp/agentic-reader-m3.2/clipcheck twocol-all
+
+tripleclick 409 260
+wait 1
+
+# Triple-click on "end": only the last line of the left column, "comes to an
+# end at omega.", is highlighted. The right column's last line "the page here at
+# zulu." at the same height is not, and neither is "Bravo".
+shot tripleclick-left-last-line
+
+key ctrl+c
+wait 1
+run /tmp/agentic-reader-m3.2/clipcheck twocol-line-left
+
+tripleclick 654 226
+wait 1
+
+# Triple-click on "reader": only the second line of the right column, "a reader
+# meets it only after the", is highlighted. The left column's second line "its
+# words run down a narrow strip" at the same height is not.
+shot tripleclick-right-line
+
+key ctrl+c
+wait 1
+run /tmp/agentic-reader-m3.2/clipcheck twocol-line-right
+
+dblclick 641 209
+wait 1
+
+# Double-click on "Bravo": only "Bravo" (top left of the right column) is
+# highlighted.
+shot dblclick-word
+
+key ctrl+c
+wait 1
+run /tmp/agentic-reader-m3.2/clipcheck twocol-word
+
+drag 460 260 680 209
+wait 1
+
+# Drag from "omega." to "opens" across the column jump: highlighted are
+# "omega." (end of the left column) and "Bravo opens" (start of the right
+# column), nothing else.
+shot drag-column-jump
+
+key ctrl+c
+wait 1
+run /tmp/agentic-reader-m3.2/clipcheck twocol-jump
+
+click 600 600
+wait 1
+
+# Click on empty page space: nothing is highlighted.
+shot cleared

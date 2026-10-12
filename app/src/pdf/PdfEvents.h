@@ -13,3 +13,7 @@ wxDECLARE_EVENT(EVT_PDF_ZOOM_CHANGED, wxCommandEvent);
 // dropped path. Queued rather than processed, so the drop finishes before the
 // handler opens dialogs.
 wxDECLARE_EVENT(EVT_PDF_FILE_DROPPED, wxCommandEvent);
+
+// Sent by PdfView whenever its text selection changes, including when it is
+// cleared. Read the new value from PdfView::selection().
+wxDECLARE_EVENT(EVT_PDF_SELECTION_CHANGED, wxCommandEvent);

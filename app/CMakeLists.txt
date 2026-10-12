@@ -24,6 +24,7 @@ add_library(reader_core STATIC
     src/pdf/PdfDocument.cpp
     src/pdf/PdfView.cpp
     src/pdf/RenderWorker.cpp
+    src/pdf/Selection.cpp
     src/pdf/TextLayer.cpp
     src/pdf/ViewNav.cpp
     src/project/Project.cpp

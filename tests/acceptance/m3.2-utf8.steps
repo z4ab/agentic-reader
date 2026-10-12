@@ -1,0 +1,41 @@
+# M3.2 acceptance, session 3 of 3: copying non-ASCII text from
+# tests/data/utf8.pdf (one 300 x 200 pt page with the line "Café naïve Größe
+# €5", see tests/data/make_utf8_pdf.py). The clipboard must hold the same UTF-8
+# text (é, ï, ö, ß and € intact, not "?" or Latin-1 bytes). Run through
+# tests/acceptance/m3.2.sh. This session is
+#   scripts/shot.sh -o <out>/utf8 -s tests/acceptance/m3.2-utf8.steps -- \
+#     env HOME=/tmp/agentic-reader-m3.2/home ./build/app/agentic-reader tests/data/utf8.pdf
+#
+# Geometry as in tests/acceptance/m3.2.steps. At fit width (zoom 731/300,
+# combo "244%") the page is at about x 237..967 and y 79..566, and page points
+# (x, y) are at (237 + 2.4367 x, 79 + 2.4367 y). The line sits at y 169..210:
+# "Café" x 286..378, "naïve" x 391..498, "Größe" x 510..634, "€5" x 647..695.
+wait 3
+
+# Focus the PDF view with a click on empty page space.
+click 600 450
+wait 1
+
+# Start: utf8.pdf at fit width, the line "Café naïve Größe €5" large near the
+# top of the page. Nothing is highlighted.
+shot start
+
+drag 300 190 680 190
+wait 1
+
+# Drag from "Café" to "€5": all four words are highlighted.
+shot drag-line
+
+key ctrl+c
+wait 1
+run /tmp/agentic-reader-m3.2/clipcheck utf8-line
+
+dblclick 572 190
+wait 1
+
+# Double-click on "Größe": only "Größe" is highlighted.
+shot dblclick-word
+
+key ctrl+c
+wait 1
+run /tmp/agentic-reader-m3.2/clipcheck utf8-word
