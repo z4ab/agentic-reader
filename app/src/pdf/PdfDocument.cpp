@@ -1,6 +1,7 @@
 #include "pdf/PdfDocument.h"
 
 #include <poppler-document.h>
+#include <poppler-global.h>
 #include <poppler-image.h>
 #include <poppler-page-renderer.h>
 #include <poppler-page.h>
@@ -126,4 +127,26 @@ wxImage PdfDocument::renderPage(int page, double scale) const
         }
     }
     return img;
+}
+
+std::vector<TextBox> PdfDocument::textBoxes(int page) const
+{
+    std::vector<TextBox> out;
+    const auto p = loadPage(*m_doc, page);
+    if (!p)
+        return out;
+
+    std::vector<poppler::text_box> boxes = p->text_list();
+    out.reserve(boxes.size());
+    for (const poppler::text_box& b : boxes) {
+        const poppler::byte_array utf8 = b.text().to_utf8();
+        const poppler::rectf r = b.bbox();
+        TextBox box;
+        box.text.assign(utf8.begin(), utf8.end());
+        box.bbox = {r.x(), r.y(), r.width(), r.height()};
+        box.hasSpaceAfter = b.has_space_after();
+        box.index = static_cast<int>(out.size());
+        out.push_back(std::move(box));
+    }
+    return out;
 }

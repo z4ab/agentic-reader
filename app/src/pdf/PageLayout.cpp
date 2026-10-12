@@ -6,6 +6,7 @@
 void PageLayout::compute(const std::vector<PageSizePts>& sizes, double zoom, int viewportWidth,
                          double /*dpiScale*/)
 {
+    m_zoom = zoom;
     m_rects.clear();
     m_rects.reserve(sizes.size());
 
@@ -59,4 +60,30 @@ std::vector<int> PageLayout::visiblePages(const PageRect& viewRect) const
             out.push_back(static_cast<int>(it - m_rects.begin()));
     }
     return out;
+}
+
+PageRect PageLayout::pageToView(int page, const RectPts& rectPts) const
+{
+    if (page < 0 || page >= pageCount())
+        return {0, 0, 0, 0};
+    const PageRect& r = m_rects[static_cast<size_t>(page)];
+    const auto edge = [this](int origin, double pts) {
+        return origin + static_cast<int>(std::lround(pts * m_zoom));
+    };
+    const int left = edge(r.x, rectPts.x);
+    const int top = edge(r.y, rectPts.y);
+    const int right = edge(r.x, rectPts.x + rectPts.w);
+    const int bottom = edge(r.y, rectPts.y + rectPts.h);
+    return {left, top, right - left, bottom - top};
+}
+
+PagePoint PageLayout::viewToPage(ViewPoint point) const
+{
+    const int page = pageAt(point.y);
+    if (page < 0)
+        return {-1, {0, 0}};
+    const PageRect& r = m_rects[static_cast<size_t>(page)];
+    if (point.x < r.x || point.x >= r.x + r.w || m_zoom <= 0)
+        return {-1, {0, 0}};
+    return {page, {(point.x - r.x) / m_zoom, (point.y - r.y) / m_zoom}};
 }

@@ -3,6 +3,7 @@
 #include "pdf/PageCache.h"
 #include "pdf/PageLayout.h"
 #include "pdf/PdfEvents.h"
+#include "pdf/TextLayer.h"
 #include "pdf/ViewNav.h"
 
 #include <wx/scrolwin.h>
@@ -42,6 +43,9 @@ public:
     double zoom() const { return m_zoom; }
     // Empty with no document.
     const std::filesystem::path& filePath() const { return m_path; }
+    // Word boxes of the pages rendered so far. A page's boxes arrive with its
+    // first rendered image.
+    const TextLayer& textLayer() const { return m_textLayer; }
 
     // Custom zoom, clamped to kMinZoom..kMaxZoom. Keeps the pane center fixed.
     void setZoom(double zoom);
@@ -100,6 +104,7 @@ private:
     // Ctrl+wheel rotation not yet turned into a zoom step.
     int m_zoomWheelRotation = 0;
     PageCache m_cache;
+    TextLayer m_textLayer;
     // Results from an older generation are dropped.
     unsigned m_generation = 0;
     std::unique_ptr<RenderWorker> m_worker;

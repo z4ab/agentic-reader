@@ -1,15 +1,30 @@
 #pragma once
 
+#include "pdf/PageLayout.h"
+
 #include <wx/gdicmn.h>
 #include <wx/image.h>
 
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace poppler {
 class document;
 }
+
+// One word of a page's text layer, as poppler's text_list() reports it.
+struct TextBox
+{
+    // UTF-8.
+    std::string text;
+    // Page points, origin at the top-left of the page as displayed.
+    RectPts bbox{0, 0, 0, 0};
+    bool hasSpaceAfter = false;
+    // Position in reading order, equal to the box's index in its page's vector.
+    int index = 0;
+};
 
 // Owns one poppler document and answers what the PDF view needs.
 // Page indices are 0-based.
@@ -42,6 +57,10 @@ public:
     // ceil(pageSizePts(page) * scale) per axis. Returns an invalid image for an
     // invalid page or a failed render.
     wxImage renderPage(int page, double scale) const;
+
+    // The page's words in reading order. Empty for an invalid page or a page
+    // without text. Slow on dense pages, so call it off the UI thread.
+    std::vector<TextBox> textBoxes(int page) const;
 
 private:
     PdfDocument(std::filesystem::path path, std::unique_ptr<poppler::document> doc);

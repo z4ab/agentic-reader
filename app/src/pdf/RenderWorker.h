@@ -1,5 +1,7 @@
 #pragma once
 
+#include "pdf/PdfDocument.h"
+
 #include <wx/event.h>
 #include <wx/image.h>
 
@@ -17,15 +19,19 @@ struct RenderRequest
     int page;
     double scale;
     unsigned generation;
+    // Also extract the page's text boxes (PdfDocument::textBoxes) on the worker.
+    bool withText = false;
 };
 
 // Payload of EVT_PAGE_RENDERED. `image` is invalid when the render failed.
+// `textBoxes` is set only when the request had withText and the document opened.
 struct RenderResult
 {
     int page;
     double scale;
     unsigned generation;
     wxImage image;
+    std::optional<std::vector<TextBox>> textBoxes;
 };
 
 // wxThreadEvent whose payload is a RenderResult.

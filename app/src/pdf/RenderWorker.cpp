@@ -11,7 +11,8 @@ namespace {
 
 bool sameRequest(const RenderRequest& a, const RenderRequest& b)
 {
-    return a.page == b.page && a.scale == b.scale && a.generation == b.generation;
+    return a.page == b.page && a.scale == b.scale && a.generation == b.generation &&
+           a.withText == b.withText;
 }
 
 } // namespace
@@ -72,10 +73,17 @@ void RenderWorker::run()
         lock.unlock();
 
         auto* event = new wxThreadEvent(EVT_PAGE_RENDERED);
-        // The temporary RenderResult dies at the end of this statement, so the
-        // event holds the only reference to the image before it crosses threads.
-        event->SetPayload(RenderResult{req.page, req.scale, req.generation,
-                                       doc ? doc->renderPage(req.page, req.scale) : wxImage()});
+        {
+            RenderResult result{req.page, req.scale, req.generation,
+                                doc ? doc->renderPage(req.page, req.scale) : wxImage(),
+                                std::nullopt};
+            // text_list() is slow on dense pages, so it runs here with the render.
+            if (req.withText && doc)
+                result.textBoxes = doc->textBoxes(req.page);
+            event->SetPayload(std::move(result));
+        }
+        // `result` died with its scope above, so the event holds the only
+        // reference to the image before it crosses threads.
         wxQueueEvent(m_sink, event);
 
         lock.lock();

@@ -92,6 +92,7 @@ void PdfView::setDocument(std::unique_ptr<PdfDocument> doc, std::string password
     m_worker.reset();
     m_worker = std::make_unique<RenderWorker>(this, m_path, std::move(password));
     m_cache.clear();
+    m_textLayer.clear();
     if (m_zoomMode != ZoomMode::Custom)
         m_zoom = fitZoom(m_zoomMode);
     relayout();
@@ -419,7 +420,7 @@ void PdfView::onPaint(wxPaintEvent& /*event*/)
         if (const wxBitmap* bmp = m_cache.get(page, scale))
             dc.DrawBitmap(*bmp, r.x, r.y, true);
         else
-            wanted.push_back({page, scale, m_generation});
+            wanted.push_back({page, scale, m_generation, !m_textLayer.hasPage(page)});
     }
 
     // Then one page above and one below, but only while they fit in the budget
@@ -433,7 +434,7 @@ void PdfView::onPaint(wxPaintEvent& /*event*/)
                 continue;
             wantedBytes += bytes;
             if (!m_cache.contains(page, scale))
-                wanted.push_back({page, scale, m_generation});
+                wanted.push_back({page, scale, m_generation, !m_textLayer.hasPage(page)});
         }
     }
     m_worker->setRequests(std::move(wanted));
@@ -441,8 +442,12 @@ void PdfView::onPaint(wxPaintEvent& /*event*/)
 
 void PdfView::onPageRendered(wxThreadEvent& event)
 {
-    const auto result = event.GetPayload<RenderResult>();
-    if (result.generation != m_generation || !result.image.IsOk())
+    auto result = event.GetPayload<RenderResult>();
+    if (result.generation != m_generation)
+        return;
+    if (result.textBoxes)
+        m_textLayer.setBoxes(result.page, std::move(*result.textBoxes));
+    if (!result.image.IsOk())
         return;
 
     // Logical size equals the page rect, physical pixels stay at full DPI.

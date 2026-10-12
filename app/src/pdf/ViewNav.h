@@ -24,12 +24,6 @@ double fitPageZoom(const PageSizePts& page, int viewportWidth, int viewportHeigh
 // page. -1 when no page overlaps.
 int mostVisiblePage(const PageLayout& layout, const PageRect& viewRect);
 
-struct ViewPoint
-{
-    int x;
-    int y;
-};
-
 // Scroll origin under `after` that puts the document point at client position
 // `anchor` (under `before` with scroll origin `origin`) back at `anchor`.
 // Offsets inside a page scale with the page. Offsets in the gaps and margins
