@@ -11,12 +11,15 @@ public:
         if (!wxApp::OnInit())
             return false;
 
-        auto* frame = new MainFrame(m_pdfPath);
+        auto* frame = new MainFrame();
         frame->Show();
+        // Opened once the window is on screen, so an error box has a visible parent.
+        if (!m_pdfPath.empty())
+            frame->CallAfter([frame, path = m_pdfPath] { frame->openFile(path); });
         return true;
     }
 
-    // Temporary: accept one optional PDF path (M2.2). M6 replaces this.
+    // One optional PDF path to open at startup.
     void OnInitCmdLine(wxCmdLineParser& parser) override
     {
         wxApp::OnInitCmdLine(parser);

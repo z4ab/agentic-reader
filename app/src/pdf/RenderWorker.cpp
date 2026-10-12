@@ -16,9 +16,10 @@ bool sameRequest(const RenderRequest& a, const RenderRequest& b)
 
 } // namespace
 
-RenderWorker::RenderWorker(wxEvtHandler* sink, std::filesystem::path path)
+RenderWorker::RenderWorker(wxEvtHandler* sink, std::filesystem::path path, std::string password)
     : m_sink(sink)
     , m_path(std::move(path))
+    , m_password(std::move(password))
     , m_thread(&RenderWorker::run, this)
 {
 }
@@ -57,7 +58,7 @@ void RenderWorker::run()
 {
     // Opened here so a large file does not stall the UI thread.
     std::string error;
-    const std::unique_ptr<PdfDocument> doc = PdfDocument::open(m_path, "", error);
+    const std::unique_ptr<PdfDocument> doc = PdfDocument::open(m_path, m_password, error);
 
     std::unique_lock lock(m_mutex);
     for (;;) {

@@ -16,6 +16,11 @@ add_executable(test_markdown test_markdown.cpp)
 target_link_libraries(test_markdown PRIVATE doctest::doctest reader_core)
 add_test(NAME markdown COMMAND test_markdown)
 
+add_executable(test_open_files test_open_files.cpp)
+target_compile_definitions(test_open_files PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+target_link_libraries(test_open_files PRIVATE doctest::doctest reader_core)
+add_test(NAME open_files COMMAND test_open_files)
+
 add_executable(test_page_cache test_page_cache.cpp)
 target_link_libraries(test_page_cache PRIVATE doctest::doctest reader_core)
 add_test(NAME page_cache COMMAND test_page_cache)

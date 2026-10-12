@@ -13,6 +13,7 @@ class SidecarClient;
 class wxCloseEvent;
 class wxComboBox;
 class wxCommandEvent;
+class wxFileHistory;
 class wxPanel;
 class wxStaticText;
 class wxTextCtrl;
@@ -22,9 +23,14 @@ class wxWindow;
 class MainFrame : public wxFrame
 {
 public:
-    // Opens pdfPath in the PDF view when it is not empty.
-    explicit MainFrame(const wxString& pdfPath = wxString());
+    MainFrame();
     ~MainFrame() override;
+
+    // Opens a PDF in the view, asking for a password when it is encrypted.
+    // On failure shows a message box and keeps the current document. A
+    // cancelled password prompt ends the attempt silently. Used by File >
+    // Open, File > Recent, drag and drop and the command line.
+    void openFile(const wxString& path);
 
 private:
     void buildMenuBar();
@@ -37,6 +43,14 @@ private:
     // No sidecar was found: the status bar and the chat pane say so.
     void showSidecarMissing();
 
+    // Shows the open document's name in the status bar and its page count
+    // and zoom in the toolbar.
+    void showOpenedFile();
+    void saveFileHistory();
+
+    void onOpen(wxCommandEvent& event);
+    void onRecent(wxCommandEvent& event);
+    void onFileDropped(wxCommandEvent& event);
     void onQuit(wxCommandEvent& event);
     void onAbout(wxCommandEvent& event);
     void onPreferences(wxCommandEvent& event);
@@ -60,4 +74,8 @@ private:
     std::unique_ptr<Settings> m_settings;
     ChatPanel* m_chat = nullptr;
     std::unique_ptr<SidecarClient> m_sidecar;
+    std::unique_ptr<wxFileHistory> m_fileHistory;
+    // Folder of the open PDF, sent to the chat as the project. Empty until a
+    // file opens.
+    wxString m_projectDir;
 };

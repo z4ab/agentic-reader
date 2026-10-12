@@ -3,6 +3,7 @@
 #include "agent/SidecarClient.h"
 #include "chat/ChatPanel.h"
 #include "chat/SetupBanner.h"
+#include "pdf/OpenPdf.h"
 #include "pdf/PdfEvents.h"
 #include "pdf/PdfView.h"
 #include "settings/Settings.h"
@@ -12,20 +13,26 @@
 #include <wx/button.h>
 #include <wx/combobox.h>
 #include <wx/config.h>
+#include <wx/filedlg.h>
+#include <wx/filehistory.h>
 #include <wx/filename.h>
-#include <wx/log.h>
 #include <wx/menu.h>
+#include <wx/msgdlg.h>
 #include <wx/panel.h>
 #include <wx/sizer.h>
 #include <wx/splitter.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
+#include <wx/textdlg.h>
 #include <wx/toolbar.h>
 
 #include <cmath>
 #include <iterator>
 #include <map>
+#include <optional>
+#include <string>
 #include <tuple>
+#include <utility>
 
 namespace
 {
@@ -38,9 +45,14 @@ constexpr int kPageEntryWidth = 60;
 constexpr int kFileField = 0;
 constexpr int kAssistantField = 1;
 constexpr int kStatusFieldCount = 2;
+// File > Recent: wxFileHistory items take consecutive IDs from the base.
+constexpr int kRecentFileCount = 10;
+constexpr int kRecentFileIdBase = wxID_HIGHEST + 1;
+// wxConfig group of the recent files, saved as file1..file10.
+const char* const kRecentFilesPath = "/RecentFiles/";
 } // namespace
 
-MainFrame::MainFrame(const wxString& pdfPath)
+MainFrame::MainFrame()
     : wxFrame(nullptr, wxID_ANY, "Agentic Reader", wxDefaultPosition, wxSize(1400, 900)),
       m_keyStore(makeSystemKeyStore()),
       m_settings(std::make_unique<Settings>(*wxConfigBase::Get(), *m_keyStore))
@@ -55,29 +67,72 @@ MainFrame::MainFrame(const wxString& pdfPath)
     m_chat->setSetupNeeded(needsSetup(*m_settings));
     Bind(wxEVT_CLOSE_WINDOW, &MainFrame::onClose, this);
     startSidecar();
-
-    // Temporary until the project panel opens files (M6).
-    if (!pdfPath.empty()) {
-        std::string error;
-        if (m_pdfView->openFile(pdfPath.utf8_string(), error)) {
-            SetStatusText(wxString::FromUTF8(m_pdfView->filePath().filename().string()),
-                          kFileField);
-            // The PDF's folder is the project until M6 adds real projects.
-            wxFileName file(pdfPath);
-            file.MakeAbsolute();
-            m_chat->openProject(file.GetPath().utf8_string());
-        } else {
-            wxLogError("Cannot open %s: %s", pdfPath, error);
-        }
-    }
-    m_pageTotal->SetLabel(wxString::Format("/ %d", m_pdfView->pageCount()));
-    GetToolBar()->Realize();
     showPage();
     showZoom();
     m_pdfView->SetFocus();
 }
 
 MainFrame::~MainFrame() = default;
+
+void MainFrame::openFile(const wxString& path)
+{
+    wxFileName file(path);
+    file.MakeAbsolute();
+    const wxString fullPath = file.GetFullPath();
+    const wxString name = file.GetFullName();
+
+    auto askPassword = [this, &name](bool wrongPassword) -> std::optional<std::string> {
+        wxString prompt = wxString::Format("\"%s\" is protected. Enter its password:", name);
+        if (wrongPassword)
+            prompt = "The password is incorrect. Try again.\n\n" + prompt;
+        wxPasswordEntryDialog dialog(this, prompt, "Password Required");
+        if (dialog.ShowModal() != wxID_OK)
+            return std::nullopt;
+        return dialog.GetValue().utf8_string();
+    };
+    OpenPdfResult result = openPdf(fullPath.utf8_string(), askPassword);
+    if (result.cancelled)
+        return;
+    if (!result.doc) {
+        wxMessageBox(wxString::Format("Cannot open \"%s\": %s.", name,
+                                      wxString::FromUTF8(result.error)),
+                     "Cannot Open File", wxOK | wxICON_ERROR, this);
+        return;
+    }
+
+    m_pdfView->setDocument(std::move(result.doc), std::move(result.password));
+    m_fileHistory->AddFileToHistory(fullPath);
+    saveFileHistory();
+    showOpenedFile();
+
+    // The PDF's folder is the project until M6 adds real projects. A file from
+    // the same folder keeps the current chat.
+    if (file.GetPath() != m_projectDir) {
+        m_projectDir = file.GetPath();
+        m_chat->openProject(m_projectDir.utf8_string());
+    }
+}
+
+void MainFrame::showOpenedFile()
+{
+    SetStatusText(wxString::FromUTF8(m_pdfView->filePath().filename().string()), kFileField);
+    m_pageTotal->SetLabel(wxString::Format("/ %d", m_pdfView->pageCount()));
+    // The total's width changed.
+    GetToolBar()->Realize();
+    showPage();
+    showZoom();
+    m_pdfView->SetFocus();
+}
+
+void MainFrame::saveFileHistory()
+{
+    wxConfigBase* config = wxConfigBase::Get();
+    {
+        wxConfigPathChanger group(config, kRecentFilesPath);
+        m_fileHistory->Save(*config);
+    }
+    config->Flush();
+}
 
 void MainFrame::startSidecar()
 {
@@ -104,7 +159,19 @@ void MainFrame::showSidecarMissing()
 void MainFrame::buildMenuBar()
 {
     auto* fileMenu = new wxMenu();
+    fileMenu->Append(wxID_OPEN, "&Open...\tCtrl+O");
+    auto* recentMenu = new wxMenu();
+    fileMenu->AppendSubMenu(recentMenu, "&Recent");
+    fileMenu->AppendSeparator();
     fileMenu->Append(wxID_EXIT, "&Quit\tCtrl+Q");
+
+    m_fileHistory = std::make_unique<wxFileHistory>(kRecentFileCount, kRecentFileIdBase);
+    m_fileHistory->UseMenu(recentMenu);
+    {
+        wxConfigBase* config = wxConfigBase::Get();
+        wxConfigPathChanger group(config, kRecentFilesPath);
+        m_fileHistory->Load(*config);
+    }
 
     // On macOS wx moves wxID_PREFERENCES to the app menu.
     auto* editMenu = new wxMenu();
@@ -119,6 +186,9 @@ void MainFrame::buildMenuBar()
     menuBar->Append(helpMenu, "&Help");
     SetMenuBar(menuBar);
 
+    Bind(wxEVT_MENU, &MainFrame::onOpen, this, wxID_OPEN);
+    Bind(wxEVT_MENU, &MainFrame::onRecent, this, kRecentFileIdBase,
+         kRecentFileIdBase + kRecentFileCount - 1);
     Bind(wxEVT_MENU, &MainFrame::onQuit, this, wxID_EXIT);
     Bind(wxEVT_MENU, &MainFrame::onAbout, this, wxID_ABOUT);
     Bind(wxEVT_MENU, &MainFrame::onPreferences, this, wxID_PREFERENCES);
@@ -173,6 +243,7 @@ void MainFrame::buildLayout()
     m_pdfView = new PdfView(inner);
     m_pdfView->Bind(EVT_PDF_PAGE_CHANGED, &MainFrame::onPdfPageChanged, this);
     m_pdfView->Bind(EVT_PDF_ZOOM_CHANGED, &MainFrame::onPdfZoomChanged, this);
+    m_pdfView->Bind(EVT_PDF_FILE_DROPPED, &MainFrame::onFileDropped, this);
     m_chat = new ChatPanel(inner, *m_sidecar);
 
     // Resizing the window grows or shrinks only the center pane.
@@ -194,6 +265,36 @@ wxPanel* MainFrame::makePane(wxWindow* parent, const wxString& label)
     sizer->AddStretchSpacer();
     panel->SetSizer(sizer);
     return panel;
+}
+
+void MainFrame::onOpen(wxCommandEvent& /*event*/)
+{
+    wxString dir;
+    if (!m_pdfView->filePath().empty())
+        dir = wxString::FromUTF8(m_pdfView->filePath().parent_path().string());
+    wxFileDialog dialog(this, "Open PDF", dir, wxString(), "PDF files (*.pdf)|*.pdf",
+                        wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+    if (dialog.ShowModal() == wxID_OK)
+        openFile(dialog.GetPath());
+}
+
+void MainFrame::onRecent(wxCommandEvent& event)
+{
+    const auto index = static_cast<size_t>(event.GetId() - kRecentFileIdBase);
+    if (index >= m_fileHistory->GetCount())
+        return;
+    const wxString path = m_fileHistory->GetHistoryFile(index);
+    openFile(path);
+    // A file that is gone leaves the list. The error box already said so.
+    if (!wxFileName::FileExists(path)) {
+        m_fileHistory->RemoveFileFromHistory(index);
+        saveFileHistory();
+    }
+}
+
+void MainFrame::onFileDropped(wxCommandEvent& event)
+{
+    openFile(event.GetString());
 }
 
 void MainFrame::onQuit(wxCommandEvent& /*event*/)

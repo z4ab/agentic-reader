@@ -4,15 +4,18 @@
 #include "pdf/RenderWorker.h"
 
 #include <wx/dcbuffer.h>
+#include <wx/dnd.h>
 #include <wx/settings.h>
 #include <wx/textdlg.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <utility>
 
 wxDEFINE_EVENT(EVT_PDF_PAGE_CHANGED, wxCommandEvent);
 wxDEFINE_EVENT(EVT_PDF_ZOOM_CHANGED, wxCommandEvent);
+wxDEFINE_EVENT(EVT_PDF_FILE_DROPPED, wxCommandEvent);
 
 namespace {
 // One mouse wheel line. Scrolling itself is per pixel (scroll rate 1).
@@ -21,6 +24,27 @@ constexpr int kWheelLineStep = 20;
 constexpr int kArrowStep = 40;
 const wxColour kBackground(0x80, 0x80, 0x80);
 const wxColour kBorder(0x40, 0x40, 0x40);
+
+// Queues EVT_PDF_FILE_DROPPED on the view for the first dropped file.
+class FileDropTarget : public wxFileDropTarget
+{
+public:
+    explicit FileDropTarget(wxWindow* view) : m_view(view) {}
+
+    bool OnDropFiles(wxCoord /*x*/, wxCoord /*y*/, const wxArrayString& files) override
+    {
+        if (files.empty())
+            return false;
+        auto* event = new wxCommandEvent(EVT_PDF_FILE_DROPPED, m_view->GetId());
+        event->SetEventObject(m_view);
+        event->SetString(files[0]);
+        m_view->GetEventHandler()->QueueEvent(event);
+        return true;
+    }
+
+private:
+    wxWindow* m_view;
+};
 } // namespace
 
 PdfView::PdfView(wxWindow* parent)
@@ -30,6 +54,7 @@ PdfView::PdfView(wxWindow* parent)
     SetBackgroundStyle(wxBG_STYLE_PAINT);
     SetScrollRate(1, 1);
     m_viewport = GetClientSize();
+    SetDropTarget(new FileDropTarget(this));
     Bind(wxEVT_PAINT, &PdfView::onPaint, this);
     Bind(wxEVT_SIZE, &PdfView::onSize, this);
     Bind(wxEVT_DPI_CHANGED, &PdfView::onDpiChanged, this);
@@ -53,14 +78,10 @@ PdfView::~PdfView()
     m_worker.reset();
 }
 
-bool PdfView::openFile(const std::filesystem::path& path, std::string& error)
+void PdfView::setDocument(std::unique_ptr<PdfDocument> doc, std::string password)
 {
-    auto doc = PdfDocument::open(path, "", error);
-    if (!doc)
-        return false;
-
     m_doc = std::move(doc);
-    m_path = path;
+    m_path = m_doc->path();
     m_sizes.clear();
     for (int i = 0; i < m_doc->pageCount(); ++i) {
         const wxRealPoint pts = m_doc->pageSizePts(i);
@@ -69,14 +90,13 @@ bool PdfView::openFile(const std::filesystem::path& path, std::string& error)
     m_currentPage = -1;
     ++m_generation;
     m_worker.reset();
-    m_worker = std::make_unique<RenderWorker>(this, path);
+    m_worker = std::make_unique<RenderWorker>(this, m_path, std::move(password));
     m_cache.clear();
     if (m_zoomMode != ZoomMode::Custom)
         m_zoom = fitZoom(m_zoomMode);
     relayout();
     scrollToOrigin(0, 0);
     sendZoomChanged();
-    return true;
 }
 
 void PdfView::setZoom(double zoom)

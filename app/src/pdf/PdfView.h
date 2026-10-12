@@ -22,15 +22,18 @@ class wxSizeEvent;
 class wxThreadEvent;
 
 // Continuous vertical scroll of every page of one document. Sends
-// EVT_PDF_PAGE_CHANGED and EVT_PDF_ZOOM_CHANGED.
+// EVT_PDF_PAGE_CHANGED and EVT_PDF_ZOOM_CHANGED, and queues
+// EVT_PDF_FILE_DROPPED when a file is dropped on it.
 class PdfView : public wxScrolledCanvas
 {
 public:
     explicit PdfView(wxWindow* parent);
     ~PdfView() override;
 
-    // Returns false and sets `error` on failure. The previous document stays open.
-    bool openFile(const std::filesystem::path& path, std::string& error);
+    // Shows `doc` (not null), replacing the current document. `password` is
+    // the one that opened it (empty for an unencrypted file), so the render
+    // thread can open its own copy.
+    void setDocument(std::unique_ptr<PdfDocument> doc, std::string password);
 
     // 0-based page with the most visible area, or -1 with no document.
     int currentPage() const { return m_currentPage; }

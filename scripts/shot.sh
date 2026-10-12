@@ -19,6 +19,7 @@
 #   dblclick <x> <y>
 #   tripleclick <x> <y>
 #   drag <x1> <y1> <x2> <y2>
+#   run <cmd> [args...]             run a helper on the Xvfb display, e.g. a drop
 #   shot <name>                     writes OUTDIR/NN-<name>.png
 #   # comment
 #
@@ -28,7 +29,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -144,6 +145,7 @@ run_step() {
       capture "$file"
       shots+=("$file")
       ;;
+    run) "$@" || die "step failed: run $*" ;;
     *) die "unknown step: $cmd" ;;
   esac
   sleep 0.3

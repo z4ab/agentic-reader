@@ -53,7 +53,7 @@ keyup ctrl
 shot opened-sample
 ```
 
-`shot <name>` writes `NN-<name>.png`. `click <x> <y> <button>` clicks another button (4 and 5 are the wheel). `keydown` and `keyup` hold and release a key, for example Ctrl around wheel clicks. The window sits at the screen origin, so coordinates are window coordinates. Each `shot` line should be preceded by a comment stating what the image must show.
+`shot <name>` writes `NN-<name>.png`. `click <x> <y> <button>` clicks another button (4 and 5 are the wheel). `keydown` and `keyup` hold and release a key, for example Ctrl around wheel clicks. `run <cmd> [args...]` runs a command on the Xvfb display without a shell, for example a drag-and-drop source built from `tests/acceptance/xdnd_drop.c` or `xdotool type` into a dialog, and stops the run if it fails. It has the same trust as the steps file. The window sits at the screen origin, so coordinates are window coordinates. Each `shot` line should be preceded by a comment stating what the image must show.
 
 Rules:
 

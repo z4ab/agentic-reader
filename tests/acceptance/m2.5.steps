@@ -1,0 +1,206 @@
+# M2.5 acceptance, run 1 of 2: open files from the command line, File > Open
+# (Ctrl+O), drag and drop; an encrypted PDF; an invalid file; File > Recent.
+# Run both runs with tests/acceptance/m2.5.sh, which sets up the fixture in
+# /tmp/agentic-reader-m2.5 and a scratch HOME. This run is
+#   scripts/shot.sh -o <out>/run1 -s tests/acceptance/m2.5.steps -- \
+#     env HOME=/tmp/agentic-reader-m2.5/home ./build/app/agentic-reader /tmp/agentic-reader-m2.5/sample.pdf
+#
+# Files: sample.pdf and doomed.pdf (3 pages, "Page One" heading on page 1),
+# long.pdf (520 pages, "Page 1 of 520" heading), locked.pdf (sample.pdf
+# encrypted, password "secret"), not-a-pdf.pdf (plain text named .pdf).
+#
+# Interface choices where the spec is silent:
+#   - File menu: "&Open...\tCtrl+O", then a submenu labelled "&Recent" (or
+#     "Open &Recent"; its mnemonic is R and no other File item uses R), then
+#     the existing "&Quit\tCtrl+Q". Recent items are wxFileHistory's
+#     "&1 name", "&2 name", ..., most recent first, so the digit keys pick them.
+#   - The open dialog is a wxFileDialog with a "*.pdf" filter. The steps type
+#     an absolute path into GTK's location bar (Ctrl+L) and press Return.
+#     GTK's location bar completes and reloads folders while keys arrive, which
+#     drops or doubles typed characters ("/tmp/gentic-...", "loocked.pdf"). So
+#     the steps type a space, go Home, send the whole path at once in front of
+#     the space (xdotool with no delay, through a `run` step), then delete the
+#     space. This was reliable in repeated runs against a wx test program.
+#   - Every successful open adds the file to Recent, whichever way it was
+#     opened (command line, dialog, drop, Recent). A failed or cancelled open
+#     adds nothing.
+#   - Wrong password: the password dialog comes straight back (its prompt may
+#     say the password was wrong). No message box in between.
+#   - Cancel in the password dialog ends the attempt silently: no message box.
+#   - Errors are a wxMessageBox whose text contains PdfDocument::open's error
+#     ("not a PDF", "file not found"). OK (Return) closes it.
+#   - The drop target accepts a file dropped on the PDF pane. Opening a
+#     dropped file follows the same rules as File > Open.
+#   - Drag and drop is driven by tests/acceptance/xdnd_drop.c, a minimal XDND
+#     source (text/uri-list, copy) like a file manager's. A drag from a real
+#     file manager stays a human check.
+#
+# Geometry at 1400x900 (see m2.4.steps): menu bar y 0..27, toolbar y 28..68,
+# PDF pane x 225..980 and y 69..875, status bar y 876..900. The status bar has
+# two fields: field 0 (bottom left) is the open file's name, field 1 the
+# assistant's state. While a menu is open, wx may show the item's help text in
+# field 0 instead.
+wait 3
+
+# Command-line path: sample.pdf is open. Page 1 with "Page One" at the top of
+# the PDF pane, toolbar entry "1 / 3", status field 0 "sample.pdf".
+shot cmdline
+
+click 600 470
+key ctrl+o
+wait 2
+
+# Ctrl+O opened a GTK file chooser over the window. Its filter control (bottom
+# right) names PDF files and shows "*.pdf". The list shows only folders and
+# .pdf files.
+shot open-dialog
+
+key ctrl+l
+wait 1
+key space
+key Home
+run xdotool type --delay 0 /tmp/agentic-reader-m2.5/doomed.pdf
+key End BackSpace
+wait 1
+key Return
+wait 3
+
+# The dialog is closed. doomed.pdf (same pages as sample.pdf) is open: "Page
+# One" at the top of the pane, entry "1 / 3", status field 0 "doomed.pdf".
+shot dialog-doomed
+
+key ctrl+o
+wait 2
+key ctrl+l
+wait 1
+key space
+key Home
+run xdotool type --delay 0 /tmp/agentic-reader-m2.5/long.pdf
+key End BackSpace
+wait 1
+key Return
+wait 3
+
+# long.pdf is open: page 1 with "Page 1 of 520" at the top of the pane, entry
+# "1 / 520", status field 0 "long.pdf".
+shot dialog-long
+
+key ctrl+o
+wait 2
+key ctrl+l
+wait 1
+key space
+key Home
+run xdotool type --delay 0 /tmp/agentic-reader-m2.5/locked.pdf
+key End BackSpace
+wait 1
+key Return
+wait 2
+
+# Encrypted PDF: a password dialog (wxPasswordEntryDialog) over the window
+# with an empty, masked entry, OK and Cancel. long.pdf is still visible behind
+# it. No error box.
+shot password-ask
+
+key Escape
+wait 2
+
+# Cancel closed the attempt: no dialog and no message box. long.pdf is still
+# shown exactly as in dialog-long, entry "1 / 520", status field 0 "long.pdf".
+shot password-cancel
+
+key ctrl+o
+wait 2
+key ctrl+l
+wait 1
+key space
+key Home
+run xdotool type --delay 0 /tmp/agentic-reader-m2.5/locked.pdf
+key End BackSpace
+wait 1
+key Return
+wait 2
+type wrong
+key Return
+wait 2
+
+# Wrong password: the password dialog is shown again with an empty entry (its
+# prompt may now say the password was wrong). No message box. long.pdf is
+# still behind it, entry "1 / 520".
+shot password-retry
+
+type secret
+key Return
+wait 3
+
+# Right password: locked.pdf is open. Page 1 shows "Page One" and its text,
+# fully rendered, exactly like sample.pdf in cmdline. White pages without text
+# mean the render thread did not get the password. Entry "1 / 3", status field
+# 0 "locked.pdf".
+shot password-ok
+
+key ctrl+o
+wait 2
+key ctrl+l
+wait 1
+key space
+key Home
+run xdotool type --delay 0 /tmp/agentic-reader-m2.5/not-a-pdf.pdf
+key End BackSpace
+wait 1
+key Return
+wait 2
+
+# Renamed text file: a message box whose text contains "not a PDF" (and may
+# name the file). locked.pdf is still visible behind it.
+shot invalid-error
+
+key Return
+wait 2
+
+# The box is closed and the app still runs. locked.pdf is still shown as in
+# password-ok: "Page One", entry "1 / 3", status field 0 "locked.pdf".
+shot invalid-kept
+
+run /tmp/agentic-reader-m2.5/xdnd-drop 600 470 /tmp/agentic-reader-m2.5/sample.pdf
+wait 3
+
+# Drag and drop: sample.pdf dropped on the PDF pane is open. "Page One" at the
+# top, entry "1 / 3", status field 0 "sample.pdf".
+shot drop-sample
+
+run /tmp/agentic-reader-m2.5/xdnd-drop 600 470 /tmp/agentic-reader-m2.5/not-a-pdf.pdf
+wait 2
+
+# Dropping the renamed text file: a message box whose text contains "not a
+# PDF". sample.pdf is still visible behind it.
+shot drop-invalid
+
+key Return
+wait 2
+
+# The box is closed. sample.pdf is still shown, entry "1 / 3", status field 0
+# "sample.pdf".
+shot drop-invalid-kept
+
+key alt+f
+wait 1
+
+# The File menu is open: "Open..." with "Ctrl+O", a "Recent" submenu entry
+# with an arrow, and "Quit" with "Ctrl+Q".
+shot file-menu
+
+key r
+wait 1
+
+# File > Recent lists the files opened in this run, most recent first, each
+# once, numbered: 1 sample.pdf, 2 locked.pdf, 3 long.pdf, 4 doomed.pdf
+# (file names or full paths). not-a-pdf.pdf is not listed. tests/acceptance/m2.5.sh
+# checks that this shot exists.
+shot recent-menu
+
+key Escape
+key Escape
+wait 1
+key ctrl+q
+wait 3

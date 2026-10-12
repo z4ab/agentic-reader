@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -30,14 +31,15 @@ struct RenderResult
 // wxThreadEvent whose payload is a RenderResult.
 wxDECLARE_EVENT(EVT_PAGE_RENDERED, wxThreadEvent);
 
-// Renders pages on its own thread with its own PdfDocument opened from `path`,
-// and posts each result to `sink` as EVT_PAGE_RENDERED. It creates wxImage only,
-// never wxBitmap. The destructor stops the thread and joins it, so `sink` must
-// outlive this object.
+// Renders pages on its own thread with its own PdfDocument opened from `path`
+// with `password` (empty for an unencrypted file), and posts each result to
+// `sink` as EVT_PAGE_RENDERED. It creates wxImage only, never wxBitmap. The
+// destructor stops the thread and joins it, so `sink` must outlive this object.
+// When the document cannot be opened, every result carries an invalid image.
 class RenderWorker
 {
 public:
-    RenderWorker(wxEvtHandler* sink, std::filesystem::path path);
+    RenderWorker(wxEvtHandler* sink, std::filesystem::path path, std::string password = {});
     ~RenderWorker();
 
     RenderWorker(const RenderWorker&) = delete;
@@ -55,6 +57,7 @@ private:
 
     wxEvtHandler* m_sink;
     std::filesystem::path m_path;
+    std::string m_password;
 
     std::mutex m_mutex;
     std::condition_variable m_wake;

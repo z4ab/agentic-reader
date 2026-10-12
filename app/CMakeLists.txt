@@ -18,6 +18,7 @@ add_library(reader_core STATIC
     src/chat/PermissionDialog.cpp
     src/chat/SetupBanner.cpp
     src/chat/ToolFormat.cpp
+    src/pdf/OpenPdf.cpp
     src/pdf/PageCache.cpp
     src/pdf/PageLayout.cpp
     src/pdf/PdfDocument.cpp
