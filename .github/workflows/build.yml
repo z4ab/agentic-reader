@@ -1,8 +1,9 @@
 name: build
 
+# Paused: runs only when started by hand (Actions > build > Run workflow).
+# Restore `push:` and `pull_request:` to run on every push again.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
