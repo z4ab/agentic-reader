@@ -14,6 +14,7 @@
 #include <condition_variable>
 #include <csignal>
 #include <mutex>
+#include <regex>
 #include <thread>
 #include <utility>
 
@@ -59,20 +60,33 @@ std::string appLogLine(const wxString& text)
     return (wxDateTime::Now().Format("%Y-%m-%d %H:%M:%S") + " [app] " + text).utf8_string();
 }
 
-// The sidecar's environment: the app's own environment with `changes` applied.
-// M7.2 builds it from Settings instead: it strips stray credentials from this
-// map, then adds the API key (or nothing for the local login) and READER_MODEL.
-wxExecuteEnv sidecarEnvironment(const std::map<wxString, std::optional<wxString>>& changes)
+// Variables that hold a credential. Their values never reach a log.
+constexpr const char* kCredentialVars[] = {
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+};
+
+// The sidecar's environment: the app's own environment, passed through
+// `source` when set, with `changes` applied.
+wxExecuteEnv sidecarEnvironment(const SidecarClient::EnvironmentSource& source,
+                                const std::map<wxString, std::optional<wxString>>& changes)
 {
-    wxExecuteEnv env;
-    wxGetEnvMap(&env.env);
+    wxEnvVariableHashMap own;
+    wxGetEnvMap(&own);
+    std::map<wxString, wxString> env(own.begin(), own.end());
+    if (source)
+        env = source(env);
     for (const auto& [name, value] : changes) {
         if (value)
-            env.env[name] = *value;
+            env[name] = *value;
         else
-            env.env.erase(name);
+            env.erase(name);
     }
-    return env;
+    wxExecuteEnv result;
+    for (const auto& [name, value] : env)
+        result.env[name] = value;
+    return result;
 }
 
 // Calls `onLine` for every complete line in `buffer` and keeps the rest.
@@ -289,6 +303,11 @@ wxString SidecarClient::locateCommand()
     return wxString();
 }
 
+void SidecarClient::setEnvironmentSource(EnvironmentSource source)
+{
+    m_envSource = std::move(source);
+}
+
 void SidecarClient::setEnvironment(std::map<wxString, std::optional<wxString>> changes)
 {
     m_envChanges = std::move(changes);
@@ -327,7 +346,29 @@ bool SidecarClient::start()
         logLine("no sidecar found: set READER_SIDECAR_CMD or install reader-sidecar next to the app");
         return false;
     }
-    logLine("sidecar command: " + m_command);
+    logLine("sidecar command: " + redacted(m_command));
+    spawn();
+    return true;
+}
+
+bool SidecarClient::restart()
+{
+    wxASSERT(wxIsMainThread());
+    if (m_state == State::ShuttingDown)
+        return false;
+    if (m_state == State::Stopped)
+        return start();
+
+    logLine("restarting the sidecar with new settings");
+    stopProcess();
+    m_backoff = 1s;
+    m_replayOpenProject = m_lastOpenProject.has_value();
+    m_state = State::Stopped;
+    m_command = locateCommand();
+    if (m_command.empty()) {
+        logLine("no sidecar found: set READER_SIDECAR_CMD or install reader-sidecar next to the app");
+        return false;
+    }
     spawn();
     return true;
 }
@@ -343,8 +384,13 @@ void SidecarClient::spawn()
 
     // wx may report an immediate exit from inside wxExecute, which retires
     // `r` (still alive: reap() runs later).
-    wxExecuteEnv env = sidecarEnvironment(m_envChanges);
-    const long pid = wxExecute(m_command, wxEXEC_ASYNC | wxEXEC_HIDE_CONSOLE, r->process, &env);
+    wxExecuteEnv env = sidecarEnvironment(m_envSource, m_envChanges);
+    long pid = 0;
+    {
+        // wx errors may quote the command line, which can hold a key.
+        wxLogNull noLog;
+        pid = wxExecute(m_command, wxEXEC_ASYNC | wxEXEC_HIDE_CONSOLE, r->process, &env);
+    }
     if (pid == 0) {
         delete r->process;
         r->process = nullptr;
@@ -442,14 +488,25 @@ void SidecarClient::shutdown()
         return;
     const State previous = m_state;
     m_state = State::ShuttingDown;
+    if (previous != State::Stopped)
+        logLine("shutting down");
+    stopProcess();
+    // Run destructors join finished threads and hand unfinished processes
+    // to wx. The client no longer hears about them.
+    m_retired.clear();
+    m_mailbox->close();
+}
+
+void SidecarClient::stopProcess()
+{
     m_readyTimer.Stop();
     m_restartTimer.Stop();
     m_writeTimer.Stop();
     m_queue.clear();
+    m_outBuf.clear();
 
     if (m_run && m_run->process && !m_run->exited) {
-        logLine("shutting down: closing sidecar stdin");
-        m_outBuf.clear();
+        logLine("closing sidecar stdin");
         m_run->process->CloseOutput();
         if (!m_run->waitStdoutEof(kExitWait)) {
             logLine("sidecar still running after 3 s, sending SIGTERM");
@@ -461,14 +518,8 @@ void SidecarClient::shutdown()
             }
         }
         logLine("sidecar stopped");
-    } else if (previous != State::Stopped) {
-        logLine("shutting down");
     }
     retireCurrentRun();
-    // Run destructors join finished threads and hand unfinished processes
-    // to wx. The client no longer hears about them.
-    m_retired.clear();
-    m_mailbox->close();
 }
 
 void SidecarClient::onProcessExit(int runId, int status)
@@ -645,4 +696,35 @@ void SidecarClient::reap()
 void SidecarClient::logLine(const wxString& text)
 {
     m_log->write(appLogLine(text));
+}
+
+// `text` with credentials replaced by "[redacted]": the values of the
+// credential variables in the app's environment and in the changes, any
+// sk-ant-... token, and the value of any NAME=value word whose NAME holds
+// KEY, TOKEN or SECRET.
+wxString SidecarClient::redacted(const wxString& text) const
+{
+    constexpr std::size_t kMinSecret = 8; // shorter values would hit ordinary words
+    std::vector<wxString> secrets;
+    for (const char* name : kCredentialVars) {
+        wxString value;
+        if (wxGetEnv(name, &value))
+            secrets.push_back(value);
+        if (const auto it = m_envChanges.find(name); it != m_envChanges.end() && it->second)
+            secrets.push_back(*it->second);
+    }
+    wxString out = text;
+    for (const wxString& secret : secrets) {
+        if (secret.length() >= kMinSecret)
+            out.Replace(secret, "[redacted]");
+    }
+
+    static const std::regex assignment(
+        R"(([A-Za-z_][A-Za-z0-9_]*(KEY|TOKEN|SECRET)[A-Za-z0-9_]*)=("[^"]*"|'[^']*'|[^\s"']+))",
+        std::regex::icase);
+    static const std::regex anthropicKey(R"(sk-ant-[A-Za-z0-9_\-]+)");
+    std::string utf8 = out.utf8_string();
+    utf8 = std::regex_replace(utf8, assignment, "$1=[redacted]");
+    utf8 = std::regex_replace(utf8, anthropicKey, "[redacted]");
+    return wxString::FromUTF8(utf8);
 }

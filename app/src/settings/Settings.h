@@ -2,6 +2,7 @@
 
 #include <wx/string.h>
 
+#include <map>
 #include <memory>
 
 class wxConfigBase;
@@ -56,7 +57,25 @@ public:
     // unavailable or the save fails. Nothing is written anywhere else.
     bool setApiKey(const wxString& key, wxString* error = nullptr);
 
+    // The sidecar's environment for the current settings: buildSidecarEnv()
+    // over `inherited`, plus ENABLE_CLAUDEAI_MCP_SERVERS=false. Reads the key
+    // store only when the local login is off.
+    std::map<wxString, wxString> sidecarEnv(const std::map<wxString, wxString>& inherited) const;
+
 private:
     wxConfigBase& m_config;
     KeyStore& m_keys;
 };
+
+// The sidecar's complete environment. Starts from `inherited` (the app's own
+// environment) without ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN and
+// ANTHROPIC_AUTH_TOKEN, so a stray shell variable cannot override the
+// settings. Then:
+//   - useLocalLogin false: ANTHROPIC_API_KEY = apiKey, unless apiKey is empty.
+//   - useLocalLogin true: no key, so the CLI uses the user's own login.
+//   - model not empty: READER_MODEL = model. Otherwise an inherited
+//     READER_MODEL passes through.
+// Pure: reads no process environment, config or key store.
+std::map<wxString, wxString> buildSidecarEnv(const std::map<wxString, wxString>& inherited,
+                                             bool useLocalLogin, const wxString& model,
+                                             const wxString& apiKey);

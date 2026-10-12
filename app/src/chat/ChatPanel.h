@@ -38,6 +38,14 @@ public:
     // chat in the restarted sidecar.
     void onSidecarDown(const wxString& reason);
 
+    // The owner is about to restart the sidecar on purpose. Interrupts a
+    // running reply and ends it with "Stopped.".
+    void interruptReply();
+
+    // The owner restarted the sidecar. Shows `notice` and reopens the chat in
+    // the new sidecar.
+    void onSidecarRestarted(const wxString& notice);
+
 private:
     void send();
     void stop();

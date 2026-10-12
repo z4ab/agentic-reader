@@ -16,6 +16,8 @@
 #include <wx/splitter.h>
 #include <wx/stattext.h>
 
+#include <map>
+
 namespace
 {
 constexpr int kLeftPaneWidth = 220;
@@ -58,6 +60,11 @@ void MainFrame::startSidecar()
     Bind(EVT_SIDECAR_READY, &MainFrame::onSidecarReady, this);
     Bind(EVT_SIDECAR_DOWN, &MainFrame::onSidecarDown, this);
     Bind(EVT_SIDECAR_MESSAGE, &MainFrame::onSidecarMessage, this);
+    // Built at every spawn, so restarts pick up saved settings.
+    m_sidecar->setEnvironmentSource(
+        [this](const std::map<wxString, wxString>& inherited) {
+            return m_settings->sidecarEnv(inherited);
+        });
     if (m_sidecar->start()) {
         SetStatusText("Starting assistant...");
     } else {
@@ -154,7 +161,18 @@ void MainFrame::onSidecarMessage(wxThreadEvent& event)
 void MainFrame::onPreferences(wxCommandEvent& /*event*/)
 {
     SettingsDialog dialog(this, *m_settings);
-    dialog.ShowModal();
+    if (dialog.ShowModal() == wxID_OK)
+        restartSidecar();
+}
+
+void MainFrame::restartSidecar()
+{
+    const wxString notice = "Settings changed, sidecar restarted";
+    m_chat->interruptReply();
+    if (!m_sidecar->restart())
+        return;
+    SetStatusText(notice);
+    m_chat->onSidecarRestarted(notice);
 }
 
 void MainFrame::onAbout(wxCommandEvent& /*event*/)

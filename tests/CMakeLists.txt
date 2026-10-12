@@ -49,6 +49,16 @@ if(NOT WIN32)
     add_test(NAME sidecar_client COMMAND test_sidecar_client)
 endif()
 
+add_executable(test_sidecar_env test_sidecar_env.cpp)
+target_link_libraries(test_sidecar_env PRIVATE doctest::doctest reader_core)
+add_test(NAME sidecar_env COMMAND test_sidecar_env)
+
+if(NOT WIN32)
+    add_executable(test_sidecar_restart test_sidecar_restart.cpp)
+    target_link_libraries(test_sidecar_restart PRIVATE doctest::doctest reader_core)
+    add_test(NAME sidecar_restart COMMAND test_sidecar_restart)
+endif()
+
 add_executable(test_smoke test_smoke.cpp)
 target_compile_features(test_smoke PRIVATE cxx_std_20)
 target_link_libraries(test_smoke PRIVATE doctest::doctest)

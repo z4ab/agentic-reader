@@ -7,6 +7,7 @@
 #include <wx/timer.h>
 
 #include <chrono>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -62,10 +63,23 @@ public:
     // it. No restart follows. Blocks the calling (UI) thread meanwhile.
     void shutdown();
 
+    // Stops the sidecar as shutdown() does, then starts a new one, which
+    // builds its environment afresh. Queued messages are dropped. The last
+    // `open_project` is re-sent once the new sidecar is ready. Sends no
+    // EVT_SIDECAR_DOWN. Starts the sidecar when it was never started.
+    // Returns false when no sidecar is found or after shutdown().
+    bool restart();
+
     bool isReady() const { return m_state == State::Ready; }
 
-    // Changes to the app's environment for the sidecar, applied at every
-    // spawn. A std::nullopt value removes the variable. Call before start().
+    // Builds the sidecar's environment from the app's own at every spawn.
+    // Without a source the sidecar gets the app's environment unchanged.
+    using EnvironmentSource = std::function<std::map<wxString, wxString>(
+        const std::map<wxString, wxString>& inherited)>;
+    void setEnvironmentSource(EnvironmentSource source);
+
+    // Changes applied after the environment source, at every spawn. A
+    // std::nullopt value removes the variable. Call before start().
     void setEnvironment(std::map<wxString, std::optional<wxString>> changes);
 
     // The log file name under <user data dir>/logs. Default "sidecar.log".
@@ -91,6 +105,7 @@ private:
     struct Run;
 
     void spawn();
+    void stopProcess();
     void onProcessExit(int runId, int status);
     void onReaderEvent(wxThreadEvent& event);
     void onMessage(int runId, const protocol::Outbound& msg);
@@ -104,9 +119,11 @@ private:
     void retireCurrentRun();
     void reap();
     void logLine(const wxString& text);
+    wxString redacted(const wxString& text) const;
 
     wxEvtHandler* m_sink;
     wxString m_command;
+    EnvironmentSource m_envSource;
     std::map<wxString, std::optional<wxString>> m_envChanges;
     wxString m_logName = "sidecar.log";
     State m_state = State::Stopped;

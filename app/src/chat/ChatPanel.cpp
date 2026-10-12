@@ -284,6 +284,24 @@ void ChatPanel::onSidecarDown(const wxString& reason)
         startChat();
 }
 
+void ChatPanel::interruptReply()
+{
+    if (!m_running)
+        return;
+    if (!m_stopRequested)
+        m_sidecar.send(protocol::Interrupt{m_chatId, std::nullopt});
+    endReply(greyHtml("Stopped."));
+}
+
+void ChatPanel::onSidecarRestarted(const wxString& notice)
+{
+    m_historyHtml += greyHtml(markdown::escapeText(notice.utf8_string()));
+    render(true);
+    // Queued until the new sidecar is ready.
+    if (m_hasProject)
+        startChat();
+}
+
 void ChatPanel::onResult(const protocol::Result& result)
 {
     if (result.chatId != m_chatId)

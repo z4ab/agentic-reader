@@ -3,6 +3,8 @@
 #include <wx/confbase.h>
 #include <wx/secretstore.h>
 
+#include <optional>
+
 namespace
 {
 
@@ -11,24 +13,26 @@ constexpr const char* kLocalLoginEntry = "/Agent/UseLocalLogin";
 
 #if wxUSE_SECRETSTORE
 
+// Opens the system store on first use, so a session that never needs the
+// key (the local login) never loads the secret service.
 class SystemKeyStore : public KeyStore
 {
 public:
     bool isOk(wxString* why) const override
     {
-        return m_store.IsOk(why);
+        return store().IsOk(why);
     }
 
     bool save(const wxString& service, const wxString& username,
               const wxString& secret) override
     {
-        return m_store.Save(service, username, wxSecretValue(secret));
+        return store().Save(service, username, wxSecretValue(secret));
     }
 
     bool load(const wxString& service, wxString& username, wxString& secret) const override
     {
         wxSecretValue value;
-        if (!m_store.Load(service, username, value))
+        if (!store().Load(service, username, value))
             return false;
         secret = value.GetAsString();
         return true;
@@ -36,11 +40,18 @@ public:
 
     bool erase(const wxString& service) override
     {
-        return m_store.Delete(service);
+        return store().Delete(service);
     }
 
 private:
-    wxSecretStore m_store = wxSecretStore::GetDefault();
+    wxSecretStore& store() const
+    {
+        if (!m_store)
+            m_store.emplace(wxSecretStore::GetDefault());
+        return *m_store;
+    }
+
+    mutable std::optional<wxSecretStore> m_store;
 };
 
 #else
@@ -145,4 +156,30 @@ bool Settings::setApiKey(const wxString& key, wxString* error)
     if (error)
         *error = "The API key could not be saved to the system key store.";
     return false;
+}
+
+std::map<wxString, wxString> Settings::sidecarEnv(
+    const std::map<wxString, wxString>& inherited) const
+{
+    const bool local = useLocalLogin();
+    auto env = buildSidecarEnv(inherited, local, model(), local ? wxString() : apiKey());
+    // The app's assistant never uses the account's claude.ai MCP connectors
+    // (Gmail, Drive, ...), which the CLI loads with a local login.
+    env["ENABLE_CLAUDEAI_MCP_SERVERS"] = "false";
+    return env;
+}
+
+std::map<wxString, wxString> buildSidecarEnv(const std::map<wxString, wxString>& inherited,
+                                             bool useLocalLogin, const wxString& model,
+                                             const wxString& apiKey)
+{
+    std::map<wxString, wxString> env = inherited;
+    env.erase("ANTHROPIC_API_KEY");
+    env.erase("CLAUDE_CODE_OAUTH_TOKEN");
+    env.erase("ANTHROPIC_AUTH_TOKEN");
+    if (!useLocalLogin && !apiKey.empty())
+        env["ANTHROPIC_API_KEY"] = apiKey;
+    if (!model.empty())
+        env["READER_MODEL"] = model;
+    return env;
 }

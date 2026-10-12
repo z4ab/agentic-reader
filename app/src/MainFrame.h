@@ -29,6 +29,7 @@ private:
     wxPanel* makePane(wxWindow* parent, const wxString& label);
 
     void startSidecar();
+    void restartSidecar();
 
     void onQuit(wxCommandEvent& event);
     void onAbout(wxCommandEvent& event);
