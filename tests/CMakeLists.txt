@@ -29,6 +29,18 @@ add_executable(test_project_transcript test_project_transcript.cpp)
 target_link_libraries(test_project_transcript PRIVATE doctest::doctest reader_core)
 add_test(NAME project_transcript COMMAND test_project_transcript)
 
+add_executable(test_protocol_cpp test_protocol_cpp.cpp)
+target_compile_definitions(test_protocol_cpp PRIVATE PROTOCOL_MD_PATH="${PROJECT_SOURCE_DIR}/sidecar/PROTOCOL.md")
+target_link_libraries(test_protocol_cpp PRIVATE doctest::doctest nlohmann_json::nlohmann_json reader_core)
+add_test(NAME protocol_cpp COMMAND test_protocol_cpp)
+
+# The fake sidecar is a POSIX shell script.
+if(NOT WIN32)
+    add_executable(test_sidecar_client test_sidecar_client.cpp)
+    target_link_libraries(test_sidecar_client PRIVATE doctest::doctest reader_core)
+    add_test(NAME sidecar_client COMMAND test_sidecar_client)
+endif()
+
 add_executable(test_smoke test_smoke.cpp)
 target_compile_features(test_smoke PRIVATE cxx_std_20)
 target_link_libraries(test_smoke PRIVATE doctest::doctest)

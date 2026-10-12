@@ -1,5 +1,6 @@
 #include "MainFrame.h"
 
+#include "agent/SidecarClient.h"
 #include "pdf/PdfView.h"
 
 #include <wx/aboutdlg.h>
@@ -24,6 +25,8 @@ MainFrame::MainFrame(const wxString& pdfPath)
     buildLayout();
     CreateStatusBar();
     SetStatusText("Ready");
+    Bind(wxEVT_CLOSE_WINDOW, &MainFrame::onClose, this);
+    startSidecar();
 
     // Temporary until the project panel opens files (M6).
     if (!pdfPath.empty()) {
@@ -31,6 +34,19 @@ MainFrame::MainFrame(const wxString& pdfPath)
         if (!m_pdfView->openFile(pdfPath.utf8_string(), error))
             wxLogError("Cannot open %s: %s", pdfPath, error);
     }
+}
+
+MainFrame::~MainFrame() = default;
+
+void MainFrame::startSidecar()
+{
+    m_sidecar = std::make_unique<SidecarClient>(this);
+    Bind(EVT_SIDECAR_READY, &MainFrame::onSidecarReady, this);
+    Bind(EVT_SIDECAR_DOWN, &MainFrame::onSidecarDown, this);
+    if (m_sidecar->start())
+        SetStatusText("Starting assistant...");
+    else
+        SetStatusText("Assistant unavailable: reader-sidecar not found");
 }
 
 void MainFrame::buildMenuBar()
@@ -88,6 +104,22 @@ wxPanel* MainFrame::makePane(wxWindow* parent, const wxString& label)
 void MainFrame::onQuit(wxCommandEvent& /*event*/)
 {
     Close(true);
+}
+
+void MainFrame::onClose(wxCloseEvent& event)
+{
+    m_sidecar->shutdown();
+    event.Skip();
+}
+
+void MainFrame::onSidecarReady(wxThreadEvent& /*event*/)
+{
+    SetStatusText("Assistant ready");
+}
+
+void MainFrame::onSidecarDown(wxThreadEvent& /*event*/)
+{
+    SetStatusText("Assistant stopped, restarting...");
 }
 
 void MainFrame::onAbout(wxCommandEvent& /*event*/)

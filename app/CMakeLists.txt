@@ -10,6 +10,8 @@ find_path(POPPLER_CPP_INCLUDE_DIR poppler-document.h PATH_SUFFIXES poppler/cpp R
 # Everything in app/src except main.cpp. Tests link this library too.
 add_library(reader_core STATIC
     src/MainFrame.cpp
+    src/agent/Protocol.cpp
+    src/agent/SidecarClient.cpp
     src/pdf/PageCache.cpp
     src/pdf/PageLayout.cpp
     src/pdf/PdfDocument.cpp
