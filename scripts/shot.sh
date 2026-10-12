@@ -12,6 +12,8 @@
 # Steps:
 #   wait <seconds>
 #   key <xdotool keysyms...>        e.g. key ctrl+o, key Next Next
+#   keydown <keysym>                hold a key, e.g. keydown ctrl before a wheel click
+#   keyup <keysym>                  release a held key
 #   type <text>
 #   click <x> <y> [button]
 #   dblclick <x> <y>
@@ -26,7 +28,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -122,6 +124,8 @@ run_step() {
   case "$cmd" in
     wait) sleep "$1" ;;
     key) xdotool key --clearmodifiers "$@" ;;
+    keydown) xdotool keydown "$@" ;;
+    keyup) xdotool keyup "$@" ;;
     type) xdotool type --delay 20 -- "$*" ;;
     click) moveto "$1" "$2"; xdotool click "${3:-1}" ;;
     dblclick) moveto "$1" "$2"; xdotool click --repeat 2 --delay 80 1 ;;

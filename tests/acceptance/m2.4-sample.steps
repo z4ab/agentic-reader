@@ -1,0 +1,65 @@
+# M2.4 acceptance on the small sample: tests/data/sample.pdf (3 US Letter pages
+# with the headings "Page One", "Page Two", "Page Three"). Run with
+#   scripts/shot.sh -o <repo>/.verify/m2.4/<impl|review|tester>/sample -s tests/acceptance/m2.4-sample.steps -- ./build/app/agentic-reader tests/data/sample.pdf
+#
+# Interface choices, click points and geometry are the ones stated at the top of
+# tests/acceptance/m2.4.steps: combo (35,48), Fit Width (148,48),
+# Fit Page (234,48), page entry (320,48), PDF pane x 225..980 and y 69..875.
+wait 3
+
+# Toolbar with the zoom combo, "Fit Width", "Fit Page" and the page entry
+# "1 / 3". Page 1 with "Page One" at the top of the pane. Status bar shows
+# "sample.pdf".
+shot start
+
+click 600 500
+key ctrl+0
+key End
+wait 2
+
+# End at fit width (combo "119%"): the bottom of page 3 with the 12px grey
+# margin below it at about y 863. Entry "3 / 3".
+shot end
+
+key ctrl+g
+key ctrl+a
+type 2
+key Return
+wait 2
+
+# Ctrl+G 2: page 2's top edge at the top of the pane (y 69..81) with
+# "Page Two" below it. Entry "2 / 3".
+shot goto-2
+
+click 234 48
+wait 2
+
+# Fit Page button: combo "99%". Page 2 fully visible, top edge at about y 81,
+# bottom edge at about y 863, page about 604px wide and centered. Entry "2 / 3".
+shot fit-page
+
+click 600 500
+key Prior
+wait 2
+
+# PgUp one viewport: the view is back at the top, page 1 fully visible with
+# "Page One". Entry "1 / 3".
+shot pgup
+
+click 320 48
+key ctrl+a
+type 3
+key Return
+wait 2
+
+# Page entry 3: page 3's top edge at the top of the pane with "Page Three".
+# At fit page the whole of page 3 fits. Entry "3 / 3".
+shot entry-3
+
+click 148 48
+wait 2
+
+# Fit Width button: combo "119%", page spans the pane width minus 12px margins
+# (about x 237..968). Page 3 still fills most of the pane. Entry "3 / 3".
+# Status bar still "sample.pdf".
+shot fit-width

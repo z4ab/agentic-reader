@@ -2,11 +2,14 @@
 
 #include "agent/SidecarClient.h"
 #include "chat/ChatPanel.h"
+#include "pdf/PdfEvents.h"
 #include "pdf/PdfView.h"
 #include "settings/Settings.h"
 #include "settings/SettingsDialog.h"
 
 #include <wx/aboutdlg.h>
+#include <wx/button.h>
+#include <wx/combobox.h>
 #include <wx/config.h>
 #include <wx/filename.h>
 #include <wx/log.h>
@@ -15,6 +18,11 @@
 #include <wx/sizer.h>
 #include <wx/splitter.h>
 #include <wx/stattext.h>
+#include <wx/textctrl.h>
+#include <wx/toolbar.h>
+
+#include <cmath>
+#include <iterator>
 
 #include <map>
 
@@ -23,6 +31,12 @@ namespace
 constexpr int kLeftPaneWidth = 220;
 constexpr int kRightPaneWidth = 420;
 constexpr int kMinPaneWidth = 100;
+constexpr int kZoomComboWidth = 100;
+constexpr int kPageEntryWidth = 60;
+// Status bar: the open file's name, then the assistant's state.
+constexpr int kFileField = 0;
+constexpr int kAssistantField = 1;
+constexpr int kStatusFieldCount = 2;
 } // namespace
 
 MainFrame::MainFrame(const wxString& pdfPath)
@@ -33,9 +47,10 @@ MainFrame::MainFrame(const wxString& pdfPath)
     // The chat pane needs the client, so it exists before the layout.
     m_sidecar = std::make_unique<SidecarClient>(this);
     buildMenuBar();
+    buildToolBar();
     buildLayout();
-    CreateStatusBar();
-    SetStatusText("Ready");
+    CreateStatusBar(kStatusFieldCount);
+    SetStatusText("Ready", kFileField);
     Bind(wxEVT_CLOSE_WINDOW, &MainFrame::onClose, this);
     startSidecar();
 
@@ -43,6 +58,8 @@ MainFrame::MainFrame(const wxString& pdfPath)
     if (!pdfPath.empty()) {
         std::string error;
         if (m_pdfView->openFile(pdfPath.utf8_string(), error)) {
+            SetStatusText(wxString::FromUTF8(m_pdfView->filePath().filename().string()),
+                          kFileField);
             // The PDF's folder is the project until M6 adds real projects.
             wxFileName file(pdfPath);
             file.MakeAbsolute();
@@ -51,6 +68,11 @@ MainFrame::MainFrame(const wxString& pdfPath)
             wxLogError("Cannot open %s: %s", pdfPath, error);
         }
     }
+    m_pageTotal->SetLabel(wxString::Format("/ %d", m_pdfView->pageCount()));
+    GetToolBar()->Realize();
+    showPage();
+    showZoom();
+    m_pdfView->SetFocus();
 }
 
 MainFrame::~MainFrame() = default;
@@ -66,9 +88,9 @@ void MainFrame::startSidecar()
             return m_settings->sidecarEnv(inherited);
         });
     if (m_sidecar->start()) {
-        SetStatusText("Starting assistant...");
+        SetStatusText("Starting assistant...", kAssistantField);
     } else {
-        SetStatusText("Assistant unavailable: reader-sidecar not found");
+        SetStatusText("Assistant unavailable: reader-sidecar not found", kAssistantField);
         m_chat->setUnavailable("The assistant is unavailable: reader-sidecar was not found.");
     }
 }
@@ -96,6 +118,41 @@ void MainFrame::buildMenuBar()
     Bind(wxEVT_MENU, &MainFrame::onPreferences, this, wxID_PREFERENCES);
 }
 
+void MainFrame::buildToolBar()
+{
+    wxToolBar* toolBar = CreateToolBar(wxTB_HORIZONTAL | wxTB_FLAT);
+
+    const wxString zoomChoices[] = {"25%", "50%", "75%", "100%", "125%",
+                                    "150%", "200%", "400%", "800%"};
+    m_zoomCombo = new wxComboBox(toolBar, wxID_ANY, "", wxDefaultPosition,
+                                 FromDIP(wxSize(kZoomComboWidth, -1)), std::size(zoomChoices),
+                                 zoomChoices, wxTE_PROCESS_ENTER);
+    toolBar->AddControl(m_zoomCombo);
+    auto* fitWidth = new wxButton(toolBar, wxID_ANY, "Fit Width");
+    toolBar->AddControl(fitWidth);
+    auto* fitPage = new wxButton(toolBar, wxID_ANY, "Fit Page");
+    toolBar->AddControl(fitPage);
+    toolBar->AddSeparator();
+    m_pageEntry = new wxTextCtrl(toolBar, wxID_ANY, "", wxDefaultPosition,
+                                 FromDIP(wxSize(kPageEntryWidth, -1)), wxTE_PROCESS_ENTER);
+    toolBar->AddControl(m_pageEntry);
+    m_pageTotal = new wxStaticText(toolBar, wxID_ANY, "/ 0");
+    toolBar->AddControl(m_pageTotal);
+    toolBar->Realize();
+
+    m_zoomCombo->Bind(wxEVT_COMBOBOX, &MainFrame::onZoomEntered, this);
+    m_zoomCombo->Bind(wxEVT_TEXT_ENTER, &MainFrame::onZoomEntered, this);
+    m_pageEntry->Bind(wxEVT_TEXT_ENTER, &MainFrame::onPageEntered, this);
+    fitWidth->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        m_pdfView->fitWidth();
+        m_pdfView->SetFocus();
+    });
+    fitPage->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        m_pdfView->fitPage();
+        m_pdfView->SetFocus();
+    });
+}
+
 void MainFrame::buildLayout()
 {
     // outer: [left | inner], inner: [center | right].
@@ -108,6 +165,8 @@ void MainFrame::buildLayout()
 
     wxPanel* left = makePane(outer, "Project");
     m_pdfView = new PdfView(inner);
+    m_pdfView->Bind(EVT_PDF_PAGE_CHANGED, &MainFrame::onPdfPageChanged, this);
+    m_pdfView->Bind(EVT_PDF_ZOOM_CHANGED, &MainFrame::onPdfZoomChanged, this);
     m_chat = new ChatPanel(inner, *m_sidecar);
 
     // Resizing the window grows or shrinks only the center pane.
@@ -144,12 +203,12 @@ void MainFrame::onClose(wxCloseEvent& event)
 
 void MainFrame::onSidecarReady(wxThreadEvent& /*event*/)
 {
-    SetStatusText("Assistant ready");
+    SetStatusText("Assistant ready", kAssistantField);
 }
 
 void MainFrame::onSidecarDown(wxThreadEvent& event)
 {
-    SetStatusText("Assistant stopped, restarting...");
+    SetStatusText("Assistant stopped, restarting...", kAssistantField);
     m_chat->onSidecarDown(event.GetString());
 }
 
@@ -171,7 +230,7 @@ void MainFrame::restartSidecar()
     m_chat->interruptReply();
     if (!m_sidecar->restart())
         return;
-    SetStatusText(notice);
+    SetStatusText(notice, kAssistantField);
     m_chat->onSidecarRestarted(notice);
 }
 
@@ -181,4 +240,45 @@ void MainFrame::onAbout(wxCommandEvent& /*event*/)
     info.SetName("Agentic Reader");
     info.SetDescription("A PDF reader with a chat pane that knows what you are reading.");
     wxAboutBox(info, this);
+}
+
+void MainFrame::onZoomEntered(wxCommandEvent& event)
+{
+    wxString text = event.GetString();
+    text.Replace("%", "");
+    double percent = 0;
+    if (text.Trim().Trim(false).ToCDouble(&percent) && percent > 0)
+        m_pdfView->setZoom(percent / 100.0);
+    showZoom();
+    m_pdfView->SetFocus();
+}
+
+void MainFrame::onPageEntered(wxCommandEvent& event)
+{
+    long page = 0;
+    if (event.GetString().Trim().Trim(false).ToLong(&page))
+        m_pdfView->goToPage(static_cast<int>(page) - 1);
+    showPage();
+    m_pdfView->SetFocus();
+}
+
+void MainFrame::onPdfPageChanged(wxCommandEvent& /*event*/)
+{
+    showPage();
+}
+
+void MainFrame::onPdfZoomChanged(wxCommandEvent& /*event*/)
+{
+    showZoom();
+}
+
+void MainFrame::showPage()
+{
+    const int page = m_pdfView->currentPage();
+    m_pageEntry->ChangeValue(page < 0 ? wxString() : wxString::Format("%d", page + 1));
+}
+
+void MainFrame::showZoom()
+{
+    m_zoomCombo->ChangeValue(wxString::Format("%ld%%", std::lround(m_pdfView->zoom() * 100)));
 }

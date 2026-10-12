@@ -30,6 +30,10 @@ public:
 
     void clear();
 
+    // Takes effect at the next put(). PdfView raises it when the visible pages
+    // alone exceed the default, so they do not evict each other.
+    void setBudget(std::size_t budgetBytes) { m_budget = budgetBytes; }
+
     std::size_t count() const { return m_index.size(); }
     std::size_t bytes() const { return m_bytes; }
     std::size_t budget() const { return m_budget; }

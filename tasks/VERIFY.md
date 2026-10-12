@@ -47,10 +47,13 @@ type hello
 click 400 300
 dblclick 400 300
 drag 100 100 400 300
+keydown ctrl
+click 400 300 4
+keyup ctrl
 shot opened-sample
 ```
 
-`shot <name>` writes `NN-<name>.png`. The window sits at the screen origin, so coordinates are window coordinates. Each `shot` line should be preceded by a comment stating what the image must show.
+`shot <name>` writes `NN-<name>.png`. `click <x> <y> <button>` clicks another button (4 and 5 are the wheel). `keydown` and `keyup` hold and release a key, for example Ctrl around wheel clicks. The window sits at the screen origin, so coordinates are window coordinates. Each `shot` line should be preceded by a comment stating what the image must show.
 
 Rules:
 

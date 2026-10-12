@@ -1,0 +1,281 @@
+# M2.4 acceptance: zoom, navigation and current page on tests/data/long.pdf
+# (520 US Letter pages, see tests/data/make_long_pdf.py). Every page shows
+# "Page N of 520" in large type at the top, 25 lines
+# "Line i of page N. The quick brown fox jumps over the lazy dog." and a blue
+# circular line pattern in its lower half. Run with
+#   scripts/shot.sh -o <repo>/.verify/m2.4/<impl|review|tester> -s tests/acceptance/m2.4.steps -- ./build/app/agentic-reader tests/data/long.pdf
+#
+# The Ctrl+wheel block at the end needs shot.sh steps `keydown <keysym>` and
+# `keyup <keysym>` (xdotool keydown/keyup). Until shot.sh has them, the run stops
+# there with "unknown step: keydown" after shots 01-24 are written.
+#
+# Interface choices where the spec is silent:
+#   - MainFrame::CreateToolBar() directly under the menu bar, left to right:
+#     zoom combo (editable wxComboBox, 100px wide), "Fit Width" and "Fit Page"
+#     (text-labelled buttons or text-only tools), a separator, the page entry
+#     (wxTextCtrl, 60px wide) and a label "/ M", so the pair reads "12 / 520".
+#     Click points below: combo text (35,48), Fit Width (148,48),
+#     Fit Page (234,48), page entry (320,48).
+#   - The zoom combo always shows the effective zoom as a whole percent, e.g.
+#     "119%" in fit width mode. Typing a plain number ("200") and Enter sets that
+#     percent. Typing a page number in the page entry and Enter jumps to it.
+#   - The go-to-page box (Ctrl+G) accepts typed digits and Enter, with its text
+#     selectable by Ctrl+A (a wxTextEntryDialog, or focusing the page entry).
+#   - A jump (Ctrl+G, page entry, Home) puts the target page's top edge at the
+#     top of the pane (at y 69, or y 81 with the 12px gap above it).
+#   - Zoom from the keys and the combo keeps the document point at the pane
+#     center fixed (zoomScrollOrigin with anchor = pane center, see
+#     tests/test_pdf_view_nav.cpp). Fit Page also scrolls so the current page is
+#     fully in view, its top edge 12px below the pane top.
+#   - Ctrl+wheel: one notch is one 10% step, anchored at the cursor.
+#
+# Geometry at the default 1400x900 window: menu bar y 0..27, toolbar y 28..68,
+# PDF pane x 225..980 and y 69..875 (client 755x806), status bar y 876..900.
+# Pane center is (602,472). Fit width = (755 - 24) / 612 = 119.4% (page 731px
+# wide, 946px tall, x 237..968). Fit page = (806 - 24) / 792 = 98.7% ("99%").
+# All y values below assume this toolbar height. If the toolbar is a few pixels
+# taller or shorter, every pane y shifts by the same amount.
+wait 3
+
+# Toolbar under the menu bar: zoom combo, "Fit Width", "Fit Page", page entry
+# "1" with "/ 520" after it. Page 1 is at the top of the PDF pane with its
+# "Page 1 of 520" heading. Status bar (bottom left) shows the file name
+# "long.pdf" (a path ending in long.pdf is also fine). The zoom combo value
+# matches the page width on screen (page width / 612).
+shot start
+
+# Focus the PDF view. The combo may hold focus at startup.
+click 600 500
+key ctrl+0
+wait 2
+
+# Ctrl+0 resets to fit width: combo "119%". Page 1 spans the pane width minus
+# 12px grey margins (about x 237..968), top edge at about y 81.
+# "Line 25 of page 1" sits at about y 647..659. Entry "1 / 520".
+shot ctrl0-fit-width
+
+key Down Down Down Down Down
+wait 1
+
+# Down x5 scrolls 200px (40px each): everything sits exactly 200px higher than
+# in ctrl0-fit-width, "Line 25 of page 1" at about y 447..459. Entry "1 / 520".
+shot down-x5
+
+key Up Up
+wait 1
+
+# Up x2 scrolls back 80px: everything sits 120px higher than in
+# ctrl0-fit-width, "Line 25 of page 1" at about y 527..539. Entry "1 / 520".
+shot up-x2
+
+key Home
+key Next
+wait 2
+
+# PgDn scrolls one viewport (806px) from the top. The lower ~150px of page 1
+# (bottom of its blue pattern and its bottom edge at about y 221), the grey gap,
+# then page 2 from about y 233 with "Page 2 of 520". Entry "2 / 520": page 2 has
+# more visible area than page 1, although page 1 is the page at the top.
+shot pgdn
+
+key Next
+wait 2
+
+# Another viewport down. Page 2's lower part ends at about y 373, page 3 starts
+# at about y 385 with "Page 3 of 520". Entry "3 / 520" (page 3 shows ~490px,
+# page 2 ~304px).
+shot pgdn-again
+
+key Prior
+wait 2
+
+# PgUp scrolls one viewport back: identical to pgdn. Entry "2 / 520".
+shot pgup
+
+key End
+wait 3
+
+# End: the bottom of page 520 with its blue pattern, its bottom edge at about
+# y 863 and the 12px grey margin below it. "Line 1 of page 520" is near the top
+# of the pane (about y 82). The heading is above the pane (the page is taller
+# than the pane at fit width). Entry "520 / 520".
+shot end
+
+key Home
+wait 3
+
+# Home: identical to ctrl0-fit-width. "Page 1 of 520" at the top, entry "1 / 520".
+shot home
+
+key ctrl+g
+wait 1
+
+# Ctrl+G opened a go-to-page box with keyboard focus, ready for a page number.
+shot goto-box
+
+key ctrl+a
+type 250
+key Return
+wait 3
+
+# The box is closed. Page 250's top edge is at the top of the pane (y 69..81)
+# with "Page 250 of 520" below it. Entry "250 / 520". Status bar still shows
+# "long.pdf". The pane center (602,472) lies on the word "over" in Line 14 or
+# Line 15 of page 250. Later zoom shots keep that word at the center.
+shot goto-250
+
+click 35 48
+key ctrl+a
+type 100
+key Return
+wait 3
+
+# Combo zoom: combo "100%". Page 612px wide (about x 296..908). The word "over"
+# of the same line of page 250 is still at the pane center. Entry "250 / 520".
+shot combo-100
+
+click 600 500
+key ctrl+plus
+key ctrl+plus
+wait 3
+
+# Ctrl++ twice: combo "120%", page about 734px wide. Same word at the pane
+# center. Entry "250 / 520".
+shot ctrl-plus-x2
+
+key ctrl+minus
+wait 3
+
+# Ctrl+- once: combo "110%", page about 673px wide. Same word at the pane
+# center. Entry "250 / 520".
+shot ctrl-minus
+
+key --repeat 12 --repeat-delay 50 ctrl+minus
+wait 4
+
+# Zoom out clamps at 25%: combo "25%", not lower. Pages are about 153x198px,
+# about four stacked in the pane, all rendered. The pane center lies in page
+# 250's block of text lines. Pages 249, 250 and 251 are fully visible and tie on
+# area, so the entry shows the lowest: "249 / 520".
+shot min-zoom
+
+key --repeat 80 --repeat-delay 30 ctrl+plus
+wait 8
+
+# Zoom in clamps at 800%: combo "800%", not higher. The pane shows a magnified
+# part of page 250's text: a few words ("jumps over the lazy") of about seven
+# lines between Line 11 and Line 18, each line about 80px tall, with the word
+# "over" of the same line as in goto-250 at or near the pane center (rounding
+# over 80 steps may drift it by up to 30px). The text is fully rendered and
+# sharp, not a white placeholder and not a blurry upscale. Entry "250 / 520".
+shot max-zoom
+
+wait 4
+
+# Rendering settled at 800%: identical to max-zoom. Any difference (a white
+# page, half-drawn glyphs) means visible pages keep being evicted and
+# re-rendered (the M2.3 cache budget note).
+shot max-zoom-settled
+
+click 234 48
+wait 3
+
+# Fit Page button: combo "99%". Page 250 fully visible, top edge at about y 81,
+# bottom edge at about y 863, page about 604px wide and centered. The heading
+# "Page 250 of 520" is visible. Entry "250 / 520".
+shot fit-page
+
+click 148 48
+wait 3
+
+# Fit Width button: combo "119%". Page spans the pane width minus 12px margins
+# (about x 237..968). Page 250 still fills most of the pane. Entry "250 / 520".
+shot fit-width
+
+click 320 48
+key ctrl+a
+type 400
+key Return
+wait 3
+
+# Page entry: page 400's top edge is at the top of the pane with
+# "Page 400 of 520" below it. Entry "400 / 520". Status bar "long.pdf".
+shot entry-400
+
+click 600 500
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+click 600 500 5
+wait 2
+
+# Wheel scroll down 10 notches: the view moved down at least 100px from
+# entry-400. The entry shows the page with the most visible area in this image
+# (compare the visible heights of the pages; 401 with wx's default 60px per
+# notch). Status bar still "long.pdf".
+shot wheel-scrolled
+
+key --repeat 40 --repeat-delay 33 Next
+
+# Taken 0.3s after holding PgDn for about 1.3s (40 presses, about 34 pages). The
+# entry already shows a page in the 430s that matches the page filling most of
+# the pane in this image (give or take one page if the shot races a repaint).
+# It does not still show 400 or 401: the entry updates while scrolling.
+shot during-scroll
+
+wait 2
+
+# Settled: the entry exactly matches the page with the most visible area, and
+# that page's heading or lines are in view. Status bar "long.pdf".
+shot after-scroll
+
+# Ctrl+wheel. Set 100% and jump to page 250 for a known position.
+click 35 48
+key ctrl+a
+type 100
+key Return
+wait 2
+click 600 500
+key ctrl+g
+key ctrl+a
+type 250
+key Return
+wait 3
+
+# Before Ctrl+wheel: combo "100%", page 250's top edge at the top of the pane.
+# The point (596,365) lies on the word "over" in Line 11 or Line 12 of page 250.
+# Note which line: the next two shots must show that same word at (596,365).
+shot before-ctrl-wheel
+
+keydown ctrl
+click 596 365 4
+click 596 365 4
+click 596 365 4
+keyup ctrl
+wait 3
+
+# Ctrl+wheel up 3 notches: combo "130%". The same word "over" of the same line
+# of page 250 is still at (596,365), within 3px. The text around it is larger
+# and the page wider than the pane. Entry "250 / 520".
+shot ctrl-wheel-in
+
+keydown ctrl
+click 596 365 5
+click 596 365 5
+click 596 365 5
+click 596 365 5
+click 596 365 5
+click 596 365 5
+keyup ctrl
+wait 3
+
+# Ctrl+wheel down 6 notches: combo "70%", page about 428px wide and centered.
+# The same word "over" of the same line of page 250 is still at (596,365),
+# within 3px. Entry "250 / 520".
+shot ctrl-wheel-out
