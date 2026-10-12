@@ -1,5 +1,6 @@
 #include "pdf/PdfView.h"
 
+#include "chat/ReaderContext.h"
 #include "pdf/PdfDocument.h"
 #include "pdf/RenderWorker.h"
 #include "pdf/SearchWorker.h"
@@ -136,6 +137,16 @@ std::optional<SelectionInfo> PdfView::selection() const
     if (!m_selection)
         return std::nullopt;
     return m_selection->info(m_textLayer);
+}
+
+int PdfView::loadSelectionPages()
+{
+    if (!m_selection || !m_doc)
+        return 0;
+    const int loaded = readercontext::loadSelectionPages(*m_selection, *m_doc, m_textLayer);
+    if (loaded > 0)
+        Refresh(); // the highlight covers the loaded pages' words too
+    return loaded;
 }
 
 void PdfView::clearSelection()

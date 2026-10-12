@@ -365,6 +365,7 @@ void MainFrame::showOpenedFile()
     GetToolBar()->Realize();
     showPage();
     showZoom();
+    m_chat->updateContext();
     m_pdfView->SetFocus();
 }
 
@@ -373,6 +374,7 @@ void MainFrame::closeFile()
     m_findBar->dismiss();
     m_pdfView->closeDocument();
     m_projectPanel->selectFile(std::string());
+    m_chat->updateContext();
     SetStatusText("Ready", kFileField);
     m_pageTotal->SetLabel("/ 0");
     GetToolBar()->Realize();
@@ -453,6 +455,8 @@ void MainFrame::buildMenuBar()
     // On macOS wx moves wxID_PREFERENCES to the app menu.
     auto* editMenu = new wxMenu();
     editMenu->Append(wxID_FIND, "&Find...\tCtrl+F");
+    m_askAboutId = wxWindow::NewControlId();
+    editMenu->Append(m_askAboutId, "&Ask about selection\tCtrl+Shift+A");
     editMenu->AppendSeparator();
     editMenu->Append(wxID_PREFERENCES, "&Preferences...");
 
@@ -485,6 +489,18 @@ void MainFrame::buildMenuBar()
     Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& event) { event.Enable(!m_projectRoot.empty()); },
          instructionsId);
     Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_findBar->activate(); }, wxID_FIND);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { askAboutSelection(); }, m_askAboutId);
+    Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& event) { event.Enable(m_pdfView->hasSelection()); },
+         m_askAboutId);
+    // Ahead of the focused control: a GTK text view, such as the chat input,
+    // takes Ctrl+Shift+A for itself before the menu sees it.
+    Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent& event) {
+        if (event.GetKeyCode() == 'A' && event.GetModifiers() == (wxMOD_CONTROL | wxMOD_SHIFT)) {
+            askAboutSelection();
+            return;
+        }
+        event.Skip();
+    });
 }
 
 void MainFrame::buildToolBar()
@@ -548,7 +564,17 @@ void MainFrame::buildLayout()
     m_pdfView->Bind(EVT_PDF_PAGE_CHANGED, &MainFrame::onPdfPageChanged, this);
     m_pdfView->Bind(EVT_PDF_ZOOM_CHANGED, &MainFrame::onPdfZoomChanged, this);
     m_pdfView->Bind(EVT_PDF_FILE_DROPPED, &MainFrame::onPathDropped, this);
+    m_pdfView->Bind(EVT_PDF_SELECTION_CHANGED,
+                    [this](wxCommandEvent&) { m_chat->updateContext(true); });
+    m_pdfView->setContextMenuHook([this](wxMenu& menu) {
+        menu.Append(m_askAboutId, "&Ask about selection\tCtrl+Shift+A");
+        menu.Enable(m_askAboutId, m_pdfView->hasSelection());
+        // After the menu closes, so the focus stays in the chat input.
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) { CallAfter(&MainFrame::askAboutSelection); },
+                  m_askAboutId);
+    });
     m_chat = new ChatPanel(inner, *m_sidecar);
+    m_chat->setContextSource([this] { return readerSnapshot(); });
 
     // Resizing the window grows or shrinks only the center pane.
     outer->SetSashGravity(0.0);
@@ -725,6 +751,27 @@ void MainFrame::onAbout(wxCommandEvent& /*event*/)
     wxAboutBox(info, this);
 }
 
+readercontext::Snapshot MainFrame::readerSnapshot()
+{
+    readercontext::Snapshot view;
+    view.file = m_pdfView->filePath();
+    if (view.file.empty())
+        return view;
+    m_pdfView->loadSelectionPages();
+    view.currentPage = m_pdfView->currentPage();
+    view.pageCount = m_pdfView->pageCount();
+    view.selection = m_pdfView->selection();
+    return view;
+}
+
+void MainFrame::askAboutSelection()
+{
+    m_pdfView->loadSelectionPages();
+    const std::optional<SelectionInfo> selection = m_pdfView->selection();
+    if (selection && !selection->text.empty())
+        m_chat->askAbout(selection->text);
+}
+
 void MainFrame::onZoomEntered(wxCommandEvent& event)
 {
     wxString text = event.GetString();
@@ -772,6 +819,7 @@ void MainFrame::showPage()
 {
     const int page = m_pdfView->currentPage();
     m_pageEntry->ChangeValue(page < 0 ? wxString() : wxString::Format("%d", page + 1));
+    m_chat->updateContext();
 }
 
 void MainFrame::showZoom()

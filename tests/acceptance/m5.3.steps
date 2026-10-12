@@ -1,0 +1,200 @@
+# M5.3 acceptance: reader context, the context chip and "Ask about selection",
+# against the logging fake sidecar tests/acceptance/m5.3-fake-sidecar.py.
+# Run it through tests/acceptance/m5.3.sh, which builds the fixture under
+# /tmp/agentic-reader-m5.3 and writes what each
+# `run /tmp/agentic-reader-m5.3/promptcheck <n> <name>` compares prompt n with
+# (text and context, exactly). The session is
+#   scripts/shot.sh -o <out> -s tests/acceptance/m5.3.steps -- \
+#     env HOME=/tmp/agentic-reader-m5.3/home \
+#       READER_SIDECAR_CMD=$PWD/tests/acceptance/m5.3-fake-sidecar.py \
+#       READER_FAKE_LOG=/tmp/agentic-reader-m5.3/prompts.log \
+#       ./build/app/agentic-reader /tmp/agentic-reader-m5.3/proj/attention.pdf
+#
+# The fake answers each prompt at once with "Fake reply to prompt <n>,
+# context: file attention.pdf, page 3, page_count 4, selection of 469 chars."
+# (or "... no selection.", or "no context."), which the shots can be read by.
+#
+# Interface choices where the spec is silent (see also tests/test_reader_context.cpp):
+#   - The chip text is "<file name> · p. <1-based current page> · <n> chars
+#     selected" ("1 char selected"; no third part without a selection or after
+#     the x). n counts Unicode code points. With no PDF open there is no chip.
+#   - The x on the chip shows while the chip includes a selection. It leaves the
+#     selection out of the next prompt only; the chip drops its third part
+#     until that prompt is sent and shows it again afterwards (while the PDF
+#     selection still exists).
+#   - The PDF context menu gets "&Ask about selection" after "Copy" (it may
+#     show "Ctrl+Shift+A"), enabled only with a selection. The steps pick it by
+#     its mnemonic: `key a` while the menu is open.
+#   - Ctrl+Shift+A works while the PDF view has the focus (a frame accelerator
+#     or a menu item, the implementer's choice). Without a selection it does
+#     nothing.
+#   - "Ask about selection" replaces the empty input with the pre-fill, puts the
+#     caret at its end (after the blank line) and focuses the input, so typing
+#     continues after the quote.
+#
+# Layout these coordinates assume (1400x900 window at the screen origin, no
+# window manager, measured on the M5.2 build): PDF pane x 225..980; at fit
+# width ("119%") a page whose top edge is at the top of the pane spans x
+# 237..967 from y 79, and a point (x, y) in page points is at
+# (237 + 1.1944 x, 79 + 1.1944 y). Page 3's paragraph runs from "Scaled" at
+# (343, 209) to "omega." at (709, 310); "regions" is at (686, 259); (600, 600)
+# is empty page space. The chat pane is x 990..1395: message view from y 72,
+# input y 775..833 (click it at (1180, 800)), Send and Stop y 840..872. The
+# chip is one row between the message view and the input, at most 32 px tall,
+# its bottom edge within 8 px of the input's top edge, and its x is the
+# rightmost item of that row, at least 16 px wide, its right edge within 12 px
+# of the input's right edge (x 1395). So a click at (1380, 757) hits the x.
+wait 3
+
+# Start. Page 1 of attention.pdf at fit width ("119%", entry "1 / 4"). The chat
+# pane shows an empty message view and the input with Send and Stop, no
+# first-run banner. Directly above the input the chip reads
+# "attention.pdf · p. 1" and nothing more (no selection, no x).
+shot start
+
+click 600 600
+key ctrl+g
+key ctrl+a
+type 3
+key Return
+wait 2
+
+# Page 3 ("Page 3" heading and its 7-line paragraph) fills the PDF pane, entry
+# "3 / 4". The chip now reads "attention.pdf · p. 3". Nothing is highlighted.
+shot page-3
+
+drag 343 209 709 310
+wait 1
+
+# The whole paragraph is highlighted, "Scaled" to "omega.", the heading is not.
+# The chip reads "attention.pdf · p. 3 · 469 chars selected" with an x at its
+# right end. The input is still empty.
+shot selected
+
+key ctrl+shift+a
+wait 1
+
+# Ctrl+Shift+A: the input has the keyboard focus (caret visible) and holds the
+# pre-fill: lines starting with "> ", the quoted first 300 chars of the
+# paragraph, whose last quoted line is "> with very small gradients. Mult" (cut
+# mid-word), then an empty line where the caret sits. The input may be
+# scrolled to show only the last lines. The highlight and the chip are
+# unchanged.
+shot ask-shortcut-prefill
+
+type what does this mean?
+wait 0.5
+
+# Typing went into the input after the blank line: its last lines are
+# "> with very small gradients. Mult", an empty line, "what does this mean?".
+shot ask-shortcut-typed
+
+key Return
+wait 2
+run /tmp/agentic-reader-m5.3/promptcheck 1 ask-shortcut
+
+# Sent. The message view shows the user message (the quote, which may render
+# as plain "> " lines, then "what does this mean?") and the reply "Fake reply
+# to prompt 1, context: file attention.pdf, page 3, page_count 4, selection of
+# 469 chars." The input is empty. The paragraph is still highlighted and the
+# chip still reads "attention.pdf · p. 3 · 469 chars selected".
+shot ask-shortcut-sent
+
+click 686 259 3
+wait 1
+
+# Right-click on "regions" inside the selection: a popup menu at the pointer
+# with "Copy" and, below it, "Ask about selection" (enabled, black text; it may
+# show "Ctrl+Shift+A"). The highlight is unchanged where the menu does not
+# cover it.
+shot context-menu
+
+key a
+wait 1
+
+# "Ask about selection" from the menu: the menu is gone, the input has the
+# focus and holds the same pre-fill as before, ending with the empty line.
+shot ask-menu-prefill
+
+type and the last line?
+key Return
+wait 2
+run /tmp/agentic-reader-m5.3/promptcheck 2 ask-menu
+
+click 1380 757
+wait 1
+
+# The x on the chip: the chip reads "attention.pdf · p. 3" (no "chars
+# selected", no x). The paragraph in the PDF is still highlighted.
+shot chip-excluded
+
+click 1180 800
+type Summarize this page.
+key Return
+wait 2
+run /tmp/agentic-reader-m5.3/promptcheck 3 excluded
+
+# The excluded prompt went without the selection: the newest reply reads "Fake
+# reply to prompt 3, context: file attention.pdf, page 3, page_count 4, no
+# selection." Since that prompt is sent, the chip reads "attention.pdf · p. 3 ·
+# 469 chars selected" again, with its x. The paragraph is still highlighted.
+shot excluded-sent
+
+click 1180 800
+type And now?
+key Return
+wait 2
+run /tmp/agentic-reader-m5.3/promptcheck 4 included-again
+
+# The next prompt carries the selection again: the newest reply reads "Fake
+# reply to prompt 4, context: file attention.pdf, page 3, page_count 4,
+# selection of 469 chars."
+shot included-again
+
+click 600 600
+wait 1
+click 600 600 3
+wait 1
+
+# No selection: nothing is highlighted, the chip reads "attention.pdf · p. 3".
+# The right-click menu shows "Copy" and "Ask about selection", both greyed out.
+shot context-menu-disabled
+
+key Escape
+wait 1
+key ctrl+shift+a
+wait 1
+
+# Ctrl+Shift+A without a selection did nothing: the menu is gone and the input
+# is empty. The chat view still ends with the reply to prompt 4.
+shot shortcut-without-selection
+
+key ctrl+shift+o
+wait 2
+key alt+Home
+wait 1
+key ctrl+l
+wait 1
+key space
+key Home
+run xdotool type --delay 0 /tmp/agentic-reader-m5.3/empty
+key End BackSpace
+wait 1
+key Return
+wait 3
+
+# Open Project on the empty folder closed the PDF: the PDF pane is empty, the
+# project header names "empty", the entry shows no page. There is no chip
+# above the input (the message view reaches down to the input or a blank row
+# sits there, with no text in it).
+shot no-pdf
+
+click 1180 800
+type Is a file open?
+key Return
+wait 2
+run /tmp/agentic-reader-m5.3/promptcheck 5 no-pdf
+
+# The prompt went without context: the newest reply reads "Fake reply to
+# prompt 5, no context." Still no chip.
+shot no-pdf-sent

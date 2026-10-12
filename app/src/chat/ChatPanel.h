@@ -1,19 +1,23 @@
 #pragma once
 
 #include "agent/Protocol.h"
+#include "chat/ReaderContext.h"
 #include "project/Project.h"
 
 #include <wx/panel.h>
 #include <wx/timer.h>
 
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
 
 class ChatList;
+class ContextChip;
 class PermissionDialog;
 class SetupBanner;
 class SidecarClient;
@@ -29,15 +33,20 @@ class wxTimerEvent;
 
 // The chat pane: the chat list (a dropdown of the project's chats, newest
 // first, with New chat, Rename and Delete), the message view, input, Send and
-// Stop. A SetupBanner takes the place of the input on first run and after the
-// API key was rejected. A rate limit adds a Retry button, a chat that cannot
-// resume a "Continue in new chat" button.
+// Stop, with the context chip above the input. A SetupBanner takes the place
+// of the chip and the input on first run and after the API key was rejected.
+// A rate limit adds a Retry button, a chat that cannot resume a "Continue in
+// new chat" button.
 //
 // Chats and their transcripts are kept by a ChatList: in the project's
 // .reader/ for a saved project, in memory for an unsaved one. Selecting a
 // chat shows its transcript and opens it in the sidecar (resume_chat, or
 // new_chat under its own id when it has no session yet), once per sidecar
 // process.
+//
+// Each prompt carries the reader context of the context source: the open
+// PDF, its current page and the selection. The chip above the input shows it,
+// and its x leaves the selection out of the next prompt.
 //
 // The owner forwards sidecar events to onSidecarMessage() and
 // onSidecarDown(). Everything runs on the UI thread.
@@ -72,6 +81,17 @@ public:
     // banner, since the user has been to Settings.
     void setSetupNeeded(bool setupNeeded);
 
+    // Called at every send and chip update for what the reader shows. Without
+    // a source prompts carry no context.
+    void setContextSource(std::function<readercontext::Snapshot()> source);
+    // The reader context changed (file, page or selection). A new selection
+    // takes back the chip's x.
+    void updateContext(bool selectionChanged = false);
+    // "Ask about selection": puts the quoted start of `selection` (UTF-8)
+    // before the input's text, the caret after it, and focuses the input.
+    // The next prompt carries the selection, even after the chip's x.
+    void askAbout(const std::string& selection);
+
     void onSidecarMessage(const protocol::Outbound& msg);
 
     // The sidecar exited. Ends a running reply with a notice and reopens the
@@ -89,9 +109,9 @@ public:
 private:
     bool canSend() const;
     void send();
-    // Shows `text` as the user's message and sends it. By value: Retry
-    // passes m_retryText, which this clears.
-    void startReply(std::string text);
+    // Shows `text` as the user's message and sends it with `context`. By
+    // value: Retry passes m_retryText, which this clears.
+    void startReply(std::string text, std::optional<protocol::Context> context);
     void retry();
     void stop();
 
@@ -112,8 +132,11 @@ private:
     std::string chatLabel(const ChatInfo& chat) const;
     void endReply(const std::string& trailerHtml);
     void updateButtons();
-    // Shows the banner or the input, and Retry when it applies.
+    // Shows the banner or the chip and the input, and Retry when it applies.
     void updateControls();
+    // Shows the chip with the context source's label, or hides it with no PDF.
+    void refreshChip();
+    readercontext::Snapshot snapshot() const;
     void scheduleRender();
     // Rebuilds the view. Keeps the scroll position unless the view was at
     // the bottom or `toBottom` is set.
@@ -145,6 +168,7 @@ private:
     void onRename(wxCommandEvent& event);
     void onDelete(wxCommandEvent& event);
     void onContinue(wxCommandEvent& event);
+    void onChipClose(wxCommandEvent& event);
     void onLink(wxHtmlLinkEvent& event);
     void onRenderTimer(wxTimerEvent& event);
 
@@ -156,6 +180,7 @@ private:
     wxButton* m_delete = nullptr;
     wxButton* m_continue = nullptr;
     wxHtmlWindow* m_view = nullptr;
+    ContextChip* m_chip = nullptr;
     wxTextCtrl* m_input = nullptr;
     wxButton* m_send = nullptr;
     wxButton* m_stop = nullptr;
@@ -169,6 +194,8 @@ private:
     bool m_keyRejected = false;
     bool m_hasProject = false;
     bool m_saveErrorShown = false;
+    std::function<readercontext::Snapshot()> m_contextSource;
+    readercontext::ChipState m_chipState;
 
     std::unique_ptr<ChatList> m_chats;
     // The selected chat.
@@ -193,8 +220,9 @@ private:
 
     bool m_running = false;
     bool m_stopRequested = false;
-    // The text of the running or last reply's prompt.
+    // The text and context of the running or last reply's prompt.
     std::string m_lastPrompt;
+    std::optional<protocol::Context> m_lastContext;
     // The prompt Retry sends again. Set while the last reply ended with
     // rate_limit.
     std::string m_retryText;

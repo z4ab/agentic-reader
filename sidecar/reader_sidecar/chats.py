@@ -282,7 +282,11 @@ class Chats:
         chat = self._get(chat_id)
         if chat.busy:
             raise ChatError("busy", "chat is busy")
-        chat.start_reply(build_prefix(context, self._root) + text, seq)
+        prefix = build_prefix(context, self._root)
+        if prefix:
+            # DEBUG only: the block holds what the user is reading.
+            log.debug("chat %s: reader context\n%s", chat_id, prefix.rstrip("\n"))
+        chat.start_reply(prefix + text, seq)
 
     async def interrupt(self, chat_id: str) -> None:
         await self._get(chat_id).interrupt()

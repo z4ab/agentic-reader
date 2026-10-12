@@ -2,6 +2,7 @@
 
 #include "agent/SidecarClient.h"
 #include "chat/ChatList.h"
+#include "chat/ContextChip.h"
 #include "chat/Markdown.h"
 #include "chat/PermissionDialog.h"
 #include "chat/SetupBanner.h"
@@ -277,6 +278,7 @@ ChatPanel::ChatPanel(wxWindow* parent, SidecarClient& sidecar)
 
     m_view = new wxHtmlWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                               wxHW_SCROLLBAR_AUTO | wxBORDER_THEME);
+    m_chip = new ContextChip(this);
     m_input = new wxTextCtrl(this, wxID_ANY, wxString(), wxDefaultPosition,
                              wxSize(-1, kInputHeight), wxTE_MULTILINE);
     m_retry = new wxButton(this, wxID_ANY, "Retry");
@@ -294,10 +296,10 @@ ChatPanel::ChatPanel(wxWindow* parent, SidecarClient& sidecar)
     m_buttons->Add(m_send, 0, wxRIGHT, kGap);
     m_buttons->Add(m_stop);
 
-    // M5.3 adds the context chip between the view and the input.
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     sizer->Add(chatRow, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, kGap);
     sizer->Add(m_view, 1, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, kGap);
+    sizer->Add(m_chip, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, kGap);
     sizer->Add(m_input, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, kGap);
     sizer->Add(m_buttons, 0, wxEXPAND | wxALL, kGap);
     // In place of the input and the buttons.
@@ -313,6 +315,7 @@ ChatPanel::ChatPanel(wxWindow* parent, SidecarClient& sidecar)
     m_newChat->Bind(wxEVT_BUTTON, &ChatPanel::onNewChat, this);
     m_rename->Bind(wxEVT_BUTTON, &ChatPanel::onRename, this);
     m_delete->Bind(wxEVT_BUTTON, &ChatPanel::onDelete, this);
+    m_chip->Bind(wxEVT_BUTTON, &ChatPanel::onChipClose, this);
     m_view->Bind(wxEVT_HTML_LINK_CLICKED, &ChatPanel::onLink, this);
     Bind(wxEVT_TIMER, &ChatPanel::onRenderTimer, this);
 
@@ -473,6 +476,53 @@ void ChatPanel::noteSaveError(const std::string& error)
     m_saveErrorShown = true;
     m_historyHtml += redHtml(markdown::escapeText("This chat is not saved: " + error));
     render(true);
+}
+
+void ChatPanel::setContextSource(std::function<readercontext::Snapshot()> source)
+{
+    m_contextSource = std::move(source);
+    refreshChip();
+}
+
+void ChatPanel::updateContext(bool selectionChanged)
+{
+    if (selectionChanged)
+        m_chipState.includeSelection();
+    refreshChip();
+}
+
+void ChatPanel::askAbout(const std::string& selection)
+{
+    const wxString prefill = wxString::FromUTF8(readercontext::askPrefill(selection));
+    if (prefill.empty() || m_setupNeeded || m_keyRejected)
+        return;
+    m_chipState.includeSelection();
+    refreshChip();
+    // A draft the user typed stays, after the quote.
+    const wxString draft = m_input->GetValue();
+    m_input->ChangeValue(draft.Strip(wxString::both).empty() ? prefill : prefill + draft);
+    m_input->SetFocus();
+    m_input->SetInsertionPoint(static_cast<long>(prefill.length()));
+    m_input->ShowPosition(m_input->GetInsertionPoint());
+}
+
+readercontext::Snapshot ChatPanel::snapshot() const
+{
+    return m_contextSource ? m_contextSource() : readercontext::Snapshot{};
+}
+
+void ChatPanel::refreshChip()
+{
+    const readercontext::Snapshot view = snapshot();
+    const std::string label = m_chipState.label(view);
+    const bool removable = !m_chipState.selectionExcluded() && view.selection
+                           && !view.selection->text.empty();
+    m_chip->setContent(wxString::FromUTF8(label), removable);
+    const bool shown = !label.empty() && !m_setupNeeded && !m_keyRejected;
+    if (GetSizer()->IsShown(m_chip) != shown) {
+        GetSizer()->Show(m_chip, shown);
+        Layout();
+    }
 }
 
 void ChatPanel::onSidecarMessage(const protocol::Outbound& msg)
@@ -708,7 +758,10 @@ void ChatPanel::send()
         return;
     }
     m_input->Clear();
-    startReply(value.utf8_string());
+    // The x on the chip covers this prompt only.
+    std::optional<protocol::Context> context = m_chipState.takeForPrompt(snapshot());
+    refreshChip();
+    startReply(value.utf8_string(), std::move(context));
 }
 
 void ChatPanel::retry()
@@ -716,10 +769,11 @@ void ChatPanel::retry()
     if (!canSend() || m_retryText.empty() || !m_hasProject || !m_chats
         || m_cannotResume.contains(m_chatId))
         return;
-    startReply(m_retryText);
+    // The same prompt again, with what the reader showed when it was sent.
+    startReply(m_retryText, m_lastContext);
 }
 
-void ChatPanel::startReply(std::string text)
+void ChatPanel::startReply(std::string text, std::optional<protocol::Context> context)
 {
     // A continued chat sends the old chat's messages with each prompt until
     // a reply came through.
@@ -731,6 +785,7 @@ void ChatPanel::startReply(std::string text)
         noteSaveError(error);
     m_historyHtml += userHtml(text);
     m_lastPrompt = text;
+    m_lastContext = context;
     m_retryText.clear();
     m_replyHtml.clear();
     m_reply.clear();
@@ -739,7 +794,7 @@ void ChatPanel::startReply(std::string text)
     m_stopRequested = false;
     refreshChatList();
     updateControls();
-    m_sidecar.send(protocol::Prompt{m_chatId, prompt, std::nullopt, std::nullopt});
+    m_sidecar.send(protocol::Prompt{m_chatId, prompt, std::move(context), std::nullopt});
     render(true);
 }
 
@@ -796,6 +851,7 @@ void ChatPanel::updateControls()
     sizer->Show(m_buttons, !banner);
     sizer->Show(m_banner, banner);
     updateButtons();
+    refreshChip();
     Layout();
 }
 
@@ -958,6 +1014,12 @@ void ChatPanel::onContinue(wxCommandEvent& /*event*/)
     if (!error.empty())
         noteSaveError(error);
     m_input->SetFocus();
+}
+
+void ChatPanel::onChipClose(wxCommandEvent& /*event*/)
+{
+    m_chipState.excludeSelection();
+    refreshChip();
 }
 
 void ChatPanel::onLink(wxHtmlLinkEvent& event)

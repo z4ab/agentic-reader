@@ -1,5 +1,7 @@
 #pragma once
 
+#include "chat/ReaderContext.h"
+
 #include <wx/frame.h>
 #include <wx/string.h>
 #include <wx/timer.h>
@@ -102,6 +104,13 @@ private:
     void onSidecarDown(wxThreadEvent& event);
     void onSidecarMessage(wxThreadEvent& event);
 
+    // What the PDF view shows, for the chat's reader context. Loads the text
+    // of selected pages not rendered yet first.
+    readercontext::Snapshot readerSnapshot();
+    // "Ask about selection" (Ctrl+Shift+A, the PDF context menu): quotes the
+    // selection in the chat input. Does nothing without a selection.
+    void askAboutSelection();
+
     void onZoomEntered(wxCommandEvent& event);
     void onPageEntered(wxCommandEvent& event);
     void onPdfPageChanged(wxCommandEvent& event);
@@ -118,6 +127,8 @@ private:
     wxComboBox* m_zoomCombo = nullptr;
     wxTextCtrl* m_pageEntry = nullptr;
     wxStaticText* m_pageTotal = nullptr;
+    // Edit > Ask about selection, also in the PDF context menu.
+    int m_askAboutId = wxID_NONE;
     std::unique_ptr<KeyStore> m_keyStore;
     std::unique_ptr<Settings> m_settings;
     ChatPanel* m_chat = nullptr;

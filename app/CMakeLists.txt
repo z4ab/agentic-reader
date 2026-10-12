@@ -15,8 +15,10 @@ add_library(reader_core STATIC
     src/agent/SidecarClient.cpp
     src/chat/ChatList.cpp
     src/chat/ChatPanel.cpp
+    src/chat/ContextChip.cpp
     src/chat/Markdown.cpp
     src/chat/PermissionDialog.cpp
+    src/chat/ReaderContext.cpp
     src/chat/SetupBanner.cpp
     src/chat/ToolFormat.cpp
     src/pdf/FindBar.cpp

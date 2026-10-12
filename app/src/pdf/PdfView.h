@@ -76,7 +76,13 @@ public:
     const TextLayer& textLayer() const { return m_textLayer; }
 
     // The selected text and its 0-based page range, nullopt without a selection.
+    // Leaves out pages whose text is not loaded: see loadSelectionPages().
     std::optional<SelectionInfo> selection() const;
+    bool hasSelection() const { return m_selection.has_value(); }
+    // Loads the text of the selected pages not rendered yet (passed over in a
+    // long drag-scroll) from the document, so selection() holds all of it.
+    // Returns how many pages it loaded. Slow on dense pages.
+    int loadSelectionPages();
     // Removes the selection (sends EVT_PDF_SELECTION_CHANGED if there was one).
     void clearSelection();
     // Puts the selected text on the clipboard. Does nothing without a selection.
