@@ -1,0 +1,69 @@
+# M7.4 acceptance: branding in the About dialog and the Preferences dialog.
+#
+# Run from the worktree root with an isolated HOME, an unreachable session bus
+# (nothing reaches the user's config or keyring) and the M7.1 fake sidecar
+# (no Claude calls, no network):
+#
+#   H=$(mktemp -d)
+#   O=<repo>/.verify/m7.4/<impl|review|tester>
+#   READER_SIDECAR_CMD="$PWD/tests/acceptance/m7.1-fake-sidecar.sh" \
+#     scripts/shot.sh -o "$O" -s tests/acceptance/m7.4.steps -- \
+#     env HOME="$H" DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent \
+#     ./build/app/agentic-reader
+#   ctest --test-dir build -R branding --output-on-failure   # must pass
+#
+# Pass: shot.sh exits 0, every shot matches its comment, and the branding
+# ctest passes.
+#
+# The app version is the project() VERSION in the top-level CMakeLists.txt
+# (0.1.0 when these steps were written). The About dialog must show that
+# exact version.
+#
+# Assumptions the steps rely on (the spec is silent):
+#   - The menu bar reads File, Edit, Help. "&Help" has mnemonic H and its
+#     About item (wxID_ABOUT) has mnemonic A. "&Edit" has mnemonic E and its
+#     Preferences item has mnemonic P (as in M7.1).
+#   - The About dialog is opened last and never closed: under Xvfb with no
+#     window manager the GTK About box does not take keyboard focus, so
+#     Escape would not reach it. shot.sh ends the app afterwards.
+wait 2
+
+# The main window (no title bar under Xvfb without a window manager). No
+# visible text anywhere (menu bar, toolbar, chat pane, setup banner, status
+# bar) contains "Claude Code".
+shot main-window
+
+key alt+e
+wait 1
+key p
+wait 2
+
+# The Preferences dialog is open. Its developer check box reads exactly
+# "Use my local Claude Code login (developer)", unchecked, with its one-line
+# personal-use warning. This label is the only text on screen that contains
+# "Claude Code" (it is kept for the user's review in M8.0). No other label,
+# button, title or message in the dialog contains "Claude Code".
+shot preferences-dev-label
+
+key Escape
+wait 1
+
+# The Preferences dialog is closed and the main window is back.
+shot preferences-closed
+
+key alt+h
+wait 1
+key a
+wait 2
+
+# The About dialog is open over the main window and shows:
+#   - the name "Agentic Reader",
+#   - the text "Powered by Claude." (for example "Agentic Reader. Powered by
+#     Claude." or the name followed by a "Powered by Claude." line),
+#   - the app version, 0.1.0 (the project() VERSION),
+#   - no "Claude Code" anywhere,
+#   - no Claude or Claude Code logo, no ASCII art, and no look-alike visual
+#     (for example a terminal-style banner or an orange starburst). No image,
+#     the app's own icon, or GTK's generic missing-image placeholder above
+#     the name is fine.
+shot about

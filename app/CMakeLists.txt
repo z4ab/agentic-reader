@@ -31,6 +31,7 @@ add_library(reader_core STATIC
 )
 target_include_directories(reader_core PUBLIC src)
 target_include_directories(reader_core SYSTEM PUBLIC ${POPPLER_CPP_INCLUDE_DIR})
+target_compile_definitions(reader_core PRIVATE READER_VERSION="${PROJECT_VERSION}")
 target_compile_features(reader_core PUBLIC cxx_std_20)
 target_link_libraries(reader_core PUBLIC md4c::md4c-html nlohmann_json::nlohmann_json Threads::Threads unofficial::poppler::poppler-cpp wx::core wx::base wx::html)
 

@@ -3,6 +3,11 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 # Later test targets also link the reader_core static library (tasks/VERIFY.md).
 
+# A bash script that greps the source tree (needs python3 for the sidecar part).
+if(NOT WIN32)
+    add_test(NAME branding COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_branding.sh ${PROJECT_SOURCE_DIR})
+endif()
+
 add_executable(test_error_ux test_error_ux.cpp)
 target_link_libraries(test_error_ux PRIVATE doctest::doctest reader_core)
 add_test(NAME error_ux COMMAND test_error_ux)

@@ -257,7 +257,9 @@ void MainFrame::onAbout(wxCommandEvent& /*event*/)
 {
     wxAboutDialogInfo info;
     info.SetName("Agentic Reader");
-    info.SetDescription("A PDF reader with a chat pane that knows what you are reading.");
+    info.SetVersion(READER_VERSION);
+    info.SetDescription("Agentic Reader. Powered by Claude.\n"
+                        "A PDF reader with a chat pane that knows what you are reading.");
     wxAboutBox(info, this);
 }
 
