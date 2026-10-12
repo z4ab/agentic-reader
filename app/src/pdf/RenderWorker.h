@@ -1,0 +1,67 @@
+#pragma once
+
+#include <wx/event.h>
+#include <wx/image.h>
+
+#include <condition_variable>
+#include <deque>
+#include <filesystem>
+#include <mutex>
+#include <optional>
+#include <thread>
+#include <vector>
+
+struct RenderRequest
+{
+    int page;
+    double scale;
+    unsigned generation;
+};
+
+// Payload of EVT_PAGE_RENDERED. `image` is invalid when the render failed.
+struct RenderResult
+{
+    int page;
+    double scale;
+    unsigned generation;
+    wxImage image;
+};
+
+// wxThreadEvent whose payload is a RenderResult.
+wxDECLARE_EVENT(EVT_PAGE_RENDERED, wxThreadEvent);
+
+// Renders pages on its own thread with its own PdfDocument opened from `path`,
+// and posts each result to `sink` as EVT_PAGE_RENDERED. It creates wxImage only,
+// never wxBitmap. The destructor stops the thread and joins it, so `sink` must
+// outlive this object.
+class RenderWorker
+{
+public:
+    RenderWorker(wxEvtHandler* sink, std::filesystem::path path);
+    ~RenderWorker();
+
+    RenderWorker(const RenderWorker&) = delete;
+    RenderWorker& operator=(const RenderWorker&) = delete;
+
+    // Replaces the pending queue. Requests are served front to back. A request
+    // equal to the one rendering now is dropped, since its result is on the way.
+    void setRequests(std::vector<RenderRequest> requests);
+
+    // Drops every pending request. The page rendering now still posts its result.
+    void clear();
+
+private:
+    void run();
+
+    wxEvtHandler* m_sink;
+    std::filesystem::path m_path;
+
+    std::mutex m_mutex;
+    std::condition_variable m_wake;
+    std::deque<RenderRequest> m_queue;
+    std::optional<RenderRequest> m_current;
+    bool m_stop = false;
+
+    // Declared last so it starts after the members above exist.
+    std::thread m_thread;
+};

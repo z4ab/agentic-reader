@@ -1,0 +1,64 @@
+# M2.3 acceptance: background rendering and the bitmap cache on tests/data/long.pdf
+# (520 US Letter pages, see tests/data/make_long_pdf.py). Every page shows
+# "Page N of 520" in large type at the top, 25 lines of small text, and a dense
+# blue circular line pattern in its lower half. Run with
+#   scripts/shot.sh -o <repo>/.verify/m2.3/<impl|review|tester> -s tests/acceptance/m2.3.steps -- ./build/app/agentic-reader tests/data/long.pdf
+# The window sits at the screen origin. The center PDF pane spans roughly x 220..980.
+#
+# Expected end of the run: shot.sh stops with "app exited during step: key ctrl+q"
+# or "app exited during step: wait 5" (exit status 1). That is the pass result
+# for the close-while-rendering check. See the last block of this file.
+wait 3
+
+# Page 1 of long.pdf, fully rendered: "Page 1 of 520" heading, the text lines,
+# and the blue pattern. Grey background, white page with a 1px border, as in M2.2.
+shot first-page
+
+# Hold PgDn: 150 presses at about 30 per second, the usual keyboard auto-repeat rate.
+click 600 500
+key --repeat 150 --repeat-delay 33 Next
+
+# Taken 0.3 s after the last PgDn. The UI kept up with the key presses, so the
+# view is already at its final scroll position: the same pages, at the same
+# offsets, as in the next shot (settled). A page may still be plain white (no
+# text, no pattern) or fully rendered, but never partly drawn, stretched,
+# blurred, or showing another page's content. For reference, the synchronous
+# M2.2 build fails this: it lags behind at "Page 135" while settled shows 158.
+shot during-scroll
+
+wait 3
+
+# Same scroll position as during-scroll: the "Page 158 of 520" heading is in
+# view (give or take a page if the pane height differs). Every visible page is
+# fully rendered with its heading (where in view), text lines and pattern.
+# No white placeholder pages remain.
+shot settled
+
+# Jump to the end.
+key End
+wait 3
+
+# The last page is in view and fully rendered: "Page 520 of 520" heading, text,
+# pattern, and the grey margin below it.
+shot last-page
+
+# Back to the start. Page 1 was likely evicted or never cached at this scale,
+# so it renders again.
+key Home
+wait 3
+
+# Same as first-page: "Page 1 of 520" fully rendered.
+shot back-to-first
+
+# Close the window while pages render: start a fast scroll so the worker has a
+# full queue, then quit with Ctrl+Q at once. The app must exit within 5 s, so
+# shot.sh stops with "app exited during step: key ctrl+q" or "... wait 5".
+# After the run, <outdir>/app.log must not contain "Segmentation fault",
+# "Aborted", "terminate called", or a wx assert.
+key --repeat 20 --repeat-delay 10 Next
+key ctrl+q
+wait 5
+
+# Must NOT exist. If this file is written, the app did not exit after Ctrl+Q
+# (hang on shutdown, for example a worker thread that never joins).
+shot app-still-running-after-quit

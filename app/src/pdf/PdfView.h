@@ -1,18 +1,20 @@
 #pragma once
 
+#include "pdf/PageCache.h"
 #include "pdf/PageLayout.h"
 
-#include <wx/bitmap.h>
 #include <wx/scrolwin.h>
 
 #include <filesystem>
-#include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 class PdfDocument;
+class RenderWorker;
 class wxPaintEvent;
 class wxSizeEvent;
+class wxThreadEvent;
 
 // Continuous vertical scroll of every page of one document.
 class PdfView : public wxScrolledCanvas
@@ -26,14 +28,20 @@ public:
 
 private:
     void relayout();
+    double renderScale() const;
+    // Drops queued renders and results in flight. Call when the render scale changes.
+    void invalidateRenders();
     void onPaint(wxPaintEvent& event);
     void onSize(wxSizeEvent& event);
     void onDpiChanged(wxDPIChangedEvent& event);
+    void onPageRendered(wxThreadEvent& event);
 
     std::unique_ptr<PdfDocument> m_doc;
     std::vector<PageSizePts> m_sizes;
     PageLayout m_layout;
     double m_zoom = 1.0;
-    // Synchronous render cache keyed by page. M2.3 replaces this.
-    std::map<int, wxBitmap> m_cache;
+    PageCache m_cache;
+    // Results from an older generation are dropped.
+    unsigned m_generation = 0;
+    std::unique_ptr<RenderWorker> m_worker;
 };

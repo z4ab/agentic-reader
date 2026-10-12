@@ -3,6 +3,10 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 # Later test targets also link the reader_core static library (tasks/VERIFY.md).
 
+add_executable(test_page_cache test_page_cache.cpp)
+target_link_libraries(test_page_cache PRIVATE doctest::doctest reader_core)
+add_test(NAME page_cache COMMAND test_page_cache)
+
 add_executable(test_page_layout test_page_layout.cpp)
 target_link_libraries(test_page_layout PRIVATE doctest::doctest reader_core)
 add_test(NAME page_layout COMMAND test_page_layout)
