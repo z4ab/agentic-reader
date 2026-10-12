@@ -105,6 +105,16 @@ else
   capture() { magick import -window root "$1"; }
 fi
 
+# mousemove --sync waits for a motion event, which never comes when the
+# pointer is already there, so skip the move in that case.
+moveto() {
+  local x y
+  eval "$(xdotool getmouselocation --shell | grep -E '^[XY]=' | tr 'XY' 'xy')"
+  if [ "$x" != "$1" ] || [ "$y" != "$2" ]; then
+    xdotool mousemove --sync "$1" "$2"
+  fi
+}
+
 n=0
 shots=()
 run_step() {
@@ -113,15 +123,15 @@ run_step() {
     wait) sleep "$1" ;;
     key) xdotool key --clearmodifiers "$@" ;;
     type) xdotool type --delay 20 -- "$*" ;;
-    click) xdotool mousemove --sync "$1" "$2" click "${3:-1}" ;;
-    dblclick) xdotool mousemove --sync "$1" "$2" click --repeat 2 --delay 80 1 ;;
-    tripleclick) xdotool mousemove --sync "$1" "$2" click --repeat 3 --delay 80 1 ;;
+    click) moveto "$1" "$2"; xdotool click "${3:-1}" ;;
+    dblclick) moveto "$1" "$2"; xdotool click --repeat 2 --delay 80 1 ;;
+    tripleclick) moveto "$1" "$2"; xdotool click --repeat 3 --delay 80 1 ;;
     drag)
-      xdotool mousemove --sync "$1" "$2" mousedown 1
+      moveto "$1" "$2"; xdotool mousedown 1
       sleep 0.1
       xdotool mousemove --sync $(( ($1 + $3) / 2 )) $(( ($2 + $4) / 2 ))
       sleep 0.1
-      xdotool mousemove --sync "$3" "$4" mouseup 1
+      moveto "$3" "$4"; xdotool mouseup 1
       ;;
     shot)
       n=$((n + 1))
