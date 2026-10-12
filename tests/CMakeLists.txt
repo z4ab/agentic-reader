@@ -12,6 +12,14 @@ add_executable(test_error_ux test_error_ux.cpp)
 target_link_libraries(test_error_ux PRIVATE doctest::doctest reader_core)
 add_test(NAME error_ux COMMAND test_error_ux)
 
+add_executable(test_instructions test_instructions.cpp)
+target_link_libraries(test_instructions PRIVATE doctest::doctest reader_core)
+add_test(NAME instructions COMMAND test_instructions)
+
+add_executable(test_instructions_save test_instructions_save.cpp)
+target_link_libraries(test_instructions_save PRIVATE doctest::doctest reader_core)
+add_test(NAME instructions_save COMMAND test_instructions_save)
+
 add_executable(test_markdown test_markdown.cpp)
 target_link_libraries(test_markdown PRIVATE doctest::doctest reader_core)
 add_test(NAME markdown COMMAND test_markdown)

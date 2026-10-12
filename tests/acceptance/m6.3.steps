@@ -1,0 +1,225 @@
+# M6.3 acceptance: Project > Instructions... edits the open project's
+# CLAUDE.md. Run it with tests/acceptance/m6.3.sh, which builds the fixture in
+# /tmp/agentic-reader-m6.3, a scratch HOME and the logging fake sidecar of
+# M6.2, and checks the files and the sidecar log after the run. The run is
+#   scripts/shot.sh -o <out> -s tests/acceptance/m6.3.steps -- \
+#     env HOME=/tmp/agentic-reader-m6.3/home \
+#       READER_SIDECAR_CMD=<worktree>/tests/acceptance/m6.2-fake-sidecar.sh \
+#       READER_FAKE_LOG=/tmp/agentic-reader-m6.3/fake.log \
+#       ./build/app/agentic-reader
+# No file on the command line, and an empty HOME, so no project is open at
+# start.
+#
+# Fixture (F = /tmp/agentic-reader-m6.3):
+#   F/proj/.reader/        empty: proj is a saved project
+#   F/proj/paper.pdf       tests/data/sample.pdf (3 pages, "Page One")
+#   F/proj/CLAUDE.md       4 lines, ending with a newline:
+#                            # Notes du projet
+#                            Citez les numéros de page — toujours.
+#                            iiiiiiiiii|
+#                            MMMMMMMMMM|
+#   F/loose/single.pdf     sample.pdf; no CLAUDE.md, no .reader/ (unsaved)
+#   F/expect/proj-original.md   copy of the original proj/CLAUDE.md
+#   F/expect/proj-saved.md      the original plus "Always answer in French.\n"
+#   F/expect/loose-saved.md     "Answer briefly." with no newline
+#
+# Interface choices where the spec is silent (the implementer conforms or
+# files a TEST DISPUTE):
+#   - The menu bar is File, Edit, Project, Help. The new "&Project" menu
+#     (Alt+P) holds "&Instructions..." (I picks it in the open menu).
+#   - With no project open the item is disabled: there is no folder to put
+#     CLAUDE.md in. It is enabled for a saved project and also for an
+#     unsaved one (M6.2): CLAUDE.md lives in the project folder, not in
+#     .reader/, so editing it does not save the project. The sidecar already
+#     runs an unsaved project's chats in that folder.
+#   - The dialog (InstructionsDialog) is modal. Its title contains
+#     "Instructions". It holds a multiline wxTextCtrl in a monospace font
+#     (wxFONTFAMILY_TELETYPE) with the content of <root>/CLAUDE.md, or empty
+#     when the file is missing, and two buttons: wxID_SAVE labelled "&Save"
+#     (Alt+S presses it) and wxID_CANCEL (Escape presses it). The text
+#     control has the focus when the dialog opens, so Ctrl+End and typing
+#     edit the text.
+#   - Save writes the control's text to <root>/CLAUDE.md byte for byte (no
+#     newline added or removed) through saveInstructions() in
+#     app/src/project/Instructions.h (tests/test_instructions.cpp), closes
+#     the dialog, and then shows the note in a message box: the instructions
+#     apply to new chats, and chats already open keep the instructions they
+#     started with. Return closes the message box. A failed save shows an
+#     error and keeps the dialog open with the text (not driven here).
+#   - Cancel (or Escape) closes the dialog without writing and without a
+#     note or a confirmation, even after an edit.
+#   - The sidecar is told nothing: new chats start the CLI in the project
+#     folder with setting_sources=["project"], so each reads CLAUDE.md
+#     itself (sidecar/reader_sidecar/chats.py, sidecar/tests/test_chats.py).
+#     No new_chat or open_project is sent because of a save.
+#   - The project tree lists PDFs only (M6.2), so CLAUDE.md never appears in
+#     it.
+#
+# Geometry at 1400x900 (see m6.2.steps): menu bar y 0..27, toolbar y 28..68,
+# left pane x 0..220, PDF pane x 225..980, status bar y 876..900.
+wait 3
+
+key alt+p
+wait 1
+
+# No project is open (empty HOME, no file given). The Project menu is open
+# under "Project" in the menu bar, between Edit and Help, and shows
+# "Instructions..." greyed out (disabled).
+shot no-project-menu
+
+key i
+wait 2
+
+# Pressing I on the disabled item opened nothing: no Instructions dialog and
+# no message box. The Project menu may still be open; nothing else changed.
+shot no-project-no-dialog
+
+key Escape
+wait 1
+key ctrl+o
+wait 2
+key alt+Home
+wait 1
+key ctrl+l
+wait 1
+key space
+key Home
+run xdotool type --delay 0 /tmp/agentic-reader-m6.3/proj/paper.pdf
+key End BackSpace
+wait 1
+key Return
+wait 3
+
+# paper.pdf is open in the saved project proj: the header names "proj" (no
+# "Unsaved project"), the tree shows only paper.pdf, the PDF pane shows
+# "Page One", status field 0 "paper.pdf".
+shot proj-open
+
+key alt+p
+wait 1
+
+# The Project menu is open and "Instructions..." is enabled (normal text,
+# not greyed out).
+shot project-menu
+
+key i
+wait 2
+
+# The Instructions dialog is open over the main window, its title contains
+# "Instructions", with Save and Cancel buttons. Its text area shows the four
+# lines of proj/CLAUDE.md and nothing else: "# Notes du projet", "Citez les
+# numéros de page — toujours." (é and the long dash drawn correctly, not as
+# boxes or "Ã©"), "iiiiiiiiii|" and "MMMMMMMMMM|". The font is monospace:
+# the two '|' are in the same column. No "Claude Code" anywhere.
+shot dialog-loaded
+
+key ctrl+End
+type DISCARD ME
+wait 1
+
+# The text area now has a fifth line "DISCARD ME" below "MMMMMMMMMM|". The
+# first four lines are unchanged.
+shot dialog-edit-to-cancel
+
+key Escape
+wait 2
+run cmp /tmp/agentic-reader-m6.3/proj/CLAUDE.md /tmp/agentic-reader-m6.3/expect/proj-original.md
+
+# Escape (Cancel) closed the dialog without asking anything and without the
+# "new chats" note: only the main window is visible, as in proj-open.
+# CLAUDE.md is unchanged (checked by the run step).
+shot cancelled
+
+key alt+p
+wait 1
+key i
+wait 2
+
+# The dialog reopened from the file: the same four lines as in
+# dialog-loaded, and no "DISCARD ME".
+shot reopened-after-cancel
+
+key ctrl+End
+type Always answer in French.
+key Return
+wait 1
+
+# The text area shows the four original lines and a fifth line "Always
+# answer in French." The caret is on the empty line below it.
+shot dialog-edit-to-save
+
+key alt+s
+wait 2
+run cmp /tmp/agentic-reader-m6.3/proj/CLAUDE.md /tmp/agentic-reader-m6.3/expect/proj-saved.md
+
+# Save wrote CLAUDE.md (checked by the run step: the original four lines,
+# UTF-8 intact, plus "Always answer in French." and a newline). The dialog
+# is closed and a message box shows the note: the instructions apply to new
+# chats, and chats already open keep the instructions they started with.
+# No "Claude Code" in it.
+shot saved-note
+
+key Return
+wait 1
+key alt+p
+wait 1
+key i
+wait 2
+
+# The message box is gone. The reopened dialog shows the saved text: the
+# four original lines and "Always answer in French.", in the monospace font.
+shot reopened-after-save
+
+key Escape
+wait 1
+run cmp /tmp/agentic-reader-m6.3/proj/CLAUDE.md /tmp/agentic-reader-m6.3/expect/proj-saved.md
+key ctrl+o
+wait 2
+key alt+Home
+wait 1
+key ctrl+l
+wait 1
+key space
+key Home
+run xdotool type --delay 0 /tmp/agentic-reader-m6.3/loose/single.pdf
+key End BackSpace
+wait 1
+key Return
+wait 3
+run test ! -e /tmp/agentic-reader-m6.3/loose/.reader
+key alt+p
+wait 1
+
+# single.pdf is open in the unsaved project loose: the header says "Unsaved
+# project" with a "Save as project" button, the tree shows only single.pdf,
+# status field 0 "single.pdf". The Project menu is open and
+# "Instructions..." is enabled.
+shot unsaved-project-menu
+
+key i
+wait 2
+
+# The Instructions dialog is open and its text area is empty (loose has no
+# CLAUDE.md), with the monospace text area, Save and Cancel as before.
+shot unsaved-dialog-empty
+
+type Answer briefly.
+wait 1
+key alt+s
+wait 2
+run cmp /tmp/agentic-reader-m6.3/loose/CLAUDE.md /tmp/agentic-reader-m6.3/expect/loose-saved.md
+run test ! -e /tmp/agentic-reader-m6.3/loose/.reader
+
+# Save created loose/CLAUDE.md holding exactly "Answer briefly." (no newline
+# added) and did not save the project: no loose/.reader/ (both checked by
+# the run steps). The dialog is closed and the "new chats" note is shown as
+# in saved-note. Behind it the header still says "Unsaved project".
+shot unsaved-saved-note
+
+key Return
+wait 1
+
+# The note is closed. The main window shows loose as an unsaved project
+# ("Unsaved project" and the "Save as project" button), the tree still
+# shows only single.pdf (CLAUDE.md is not a PDF), single.pdf is open.
+shot unsaved-after-note

@@ -81,6 +81,8 @@ private:
     void onPathDropped(wxCommandEvent& event);
     void onProjectFileActivated(wxCommandEvent& event);
     void onSaveAsProject(wxCommandEvent& event);
+    // Project > Instructions: edits the open project's CLAUDE.md.
+    void onInstructions(wxCommandEvent& event);
     void onQuit(wxCommandEvent& event);
     void onAbout(wxCommandEvent& event);
     void onPreferences(wxCommandEvent& event);

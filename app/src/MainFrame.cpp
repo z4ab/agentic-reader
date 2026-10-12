@@ -6,6 +6,8 @@
 #include "pdf/OpenPdf.h"
 #include "pdf/PdfEvents.h"
 #include "pdf/PdfView.h"
+#include "project/Instructions.h"
+#include "project/InstructionsDialog.h"
 #include "project/Project.h"
 #include "project/ProjectPanel.h"
 #include "project/ProjectTree.h"
@@ -386,12 +388,17 @@ void MainFrame::buildMenuBar()
     auto* editMenu = new wxMenu();
     editMenu->Append(wxID_PREFERENCES, "&Preferences...");
 
+    auto* projectMenu = new wxMenu();
+    const int instructionsId = wxWindow::NewControlId();
+    projectMenu->Append(instructionsId, "&Instructions...");
+
     auto* helpMenu = new wxMenu();
     helpMenu->Append(wxID_ABOUT, "&About");
 
     auto* menuBar = new wxMenuBar();
     menuBar->Append(fileMenu, "&File");
     menuBar->Append(editMenu, "&Edit");
+    menuBar->Append(projectMenu, "&Project");
     menuBar->Append(helpMenu, "&Help");
     SetMenuBar(menuBar);
 
@@ -404,6 +411,11 @@ void MainFrame::buildMenuBar()
     Bind(wxEVT_MENU, &MainFrame::onQuit, this, wxID_EXIT);
     Bind(wxEVT_MENU, &MainFrame::onAbout, this, wxID_ABOUT);
     Bind(wxEVT_MENU, &MainFrame::onPreferences, this, wxID_PREFERENCES);
+    Bind(wxEVT_MENU, &MainFrame::onInstructions, this, instructionsId);
+    // CLAUDE.md lives in the project folder, so any open project, saved or
+    // unsaved, can have one.
+    Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& event) { event.Enable(!m_projectRoot.empty()); },
+         instructionsId);
 }
 
 void MainFrame::buildToolBar()
@@ -537,6 +549,35 @@ void MainFrame::onProjectFileActivated(wxCommandEvent& event)
 void MainFrame::onSaveAsProject(wxCommandEvent& /*event*/)
 {
     saveAsProject();
+}
+
+void MainFrame::onInstructions(wxCommandEvent& /*event*/)
+{
+    if (m_projectRoot.empty())
+        return;
+    std::string text;
+    std::string error;
+    if (!loadInstructions(m_projectRoot, text, error)) {
+        wxMessageBox(wxString::Format("Could not read the instructions.\n\n%s",
+                                      wxString::FromUTF8(error)),
+                     "Cannot Open Instructions", wxOK | wxICON_ERROR, this);
+        return;
+    }
+    const wxString value = wxString::FromUTF8(text);
+    // Saving text that did not convert would lose the file's content.
+    if (value.empty() && !text.empty()) {
+        wxMessageBox(wxString::Format("Could not read the instructions: %s is not UTF-8 text.",
+                                      toWx(instructionsPath(m_projectRoot))),
+                     "Cannot Open Instructions", wxOK | wxICON_ERROR, this);
+        return;
+    }
+    InstructionsDialog dialog(this, m_projectRoot, value);
+    if (dialog.ShowModal() != wxID_SAVE)
+        return;
+    // The sidecar is not told: each new chat reads CLAUDE.md when it starts.
+    wxMessageBox("The instructions are saved. They apply to new chats. Chats that are already "
+                 "open may keep the instructions they started with.",
+                 "Instructions Saved", wxOK | wxICON_INFORMATION, this);
 }
 
 void MainFrame::onQuit(wxCommandEvent& /*event*/)

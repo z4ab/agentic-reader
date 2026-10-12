@@ -27,6 +27,8 @@ add_library(reader_core STATIC
     src/pdf/Selection.cpp
     src/pdf/TextLayer.cpp
     src/pdf/ViewNav.cpp
+    src/project/Instructions.cpp
+    src/project/InstructionsDialog.cpp
     src/project/Project.cpp
     src/project/ProjectPanel.cpp
     src/project/ProjectTree.cpp
