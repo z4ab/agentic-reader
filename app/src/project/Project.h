@@ -1,5 +1,7 @@
 #pragma once
 
+#include "pdf/PageLayout.h"
+
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
@@ -10,11 +12,14 @@
 #include <vector>
 
 // Reading state of one PDF, stored under "files" in project.json.
-// `lastPage` is the 0-based page. `zoom` is a formatZoom() string.
+// `lastPage` is the 0-based page. `zoom` is a formatZoom() string. `layout` is
+// set only when the user chose a mode other than the detected one. nullopt is
+// written as no "layout" key.
 struct FileState
 {
     int lastPage = 0;
     std::string zoom;
+    std::optional<LayoutMode> layout;
 };
 
 enum class ZoomKind

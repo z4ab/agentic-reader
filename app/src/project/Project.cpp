@@ -109,6 +109,24 @@ json emptyProjectJson()
 
 constexpr const char* kZoomFitWidth = "fit-width";
 constexpr const char* kZoomFitPage = "fit-page";
+constexpr const char* kLayoutSingle = "single";
+constexpr const char* kLayoutContinuous = "continuous";
+
+// The layout of a "layout" value. Anything else reads as unset.
+std::optional<LayoutMode> parseLayout(const json& value)
+{
+    if (!value.is_string()) {
+        return std::nullopt;
+    }
+    const std::string text = value.get<std::string>();
+    if (text == kLayoutSingle) {
+        return LayoutMode::SinglePage;
+    }
+    if (text == kLayoutContinuous) {
+        return LayoutMode::Continuous;
+    }
+    return std::nullopt;
+}
 
 } // namespace
 
@@ -221,7 +239,11 @@ void Project::load()
         std::map<std::string, FileState> files;
         if (j.contains("files")) {
             for (const auto& [rel, entry] : j.at("files").items()) {
-                files[rel] = FileState{entry.value("last_page", 0), entry.value("zoom", "")};
+                FileState state{entry.value("last_page", 0), entry.value("zoom", "")};
+                if (entry.contains("layout")) {
+                    state.layout = parseLayout(entry["layout"]);
+                }
+                files[rel] = std::move(state);
             }
         }
 
@@ -331,6 +353,12 @@ bool Project::save(std::string& error) const
         }
         entry["last_page"] = state.lastPage;
         entry["zoom"] = state.zoom;
+        if (state.layout) {
+            entry["layout"] = *state.layout == LayoutMode::SinglePage ? kLayoutSingle
+                                                                      : kLayoutContinuous;
+        } else {
+            entry.erase("layout");
+        }
         files[rel] = std::move(entry);
     }
     out["files"] = std::move(files);

@@ -9,6 +9,10 @@ wxDECLARE_EVENT(EVT_PDF_PAGE_CHANGED, wxCommandEvent);
 // Sent by PdfView when its zoom changes. Read the new value from PdfView::zoom().
 wxDECLARE_EVENT(EVT_PDF_ZOOM_CHANGED, wxCommandEvent);
 
+// Sent by PdfView when the user switches layout mode (PdfView::setLayoutMode).
+// GetInt() is the new LayoutMode. Not sent when the layout is set on open.
+wxDECLARE_EVENT(EVT_PDF_LAYOUT_CHANGED, wxCommandEvent);
+
 // Queued by PdfView when files are dropped on it. GetString() is the first
 // dropped path. Queued rather than processed, so the drop finishes before the
 // handler opens dialogs.

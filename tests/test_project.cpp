@@ -1,3 +1,27 @@
+// M10.2: layout tests for FileState::layout in project.json (app/src/project/Project.h).
+// They are appended after the M6.1 tests, which are unchanged.
+//
+// Interface choices where the spec is silent (the implementer conforms or
+// files a TEST DISPUTE):
+//   - FileState gains a third member, std::optional<LayoutMode> layout, after
+//     zoom. LayoutMode is the enum in pdf/PageLayout.h, which Project.h
+//     includes. std::nullopt means unset. FileState{lastPage, zoom} still
+//     compiles and means unset.
+//   - The JSON key is "layout" in the file's entry, next to "last_page" and
+//     "zoom". LayoutMode::SinglePage is "single" and LayoutMode::Continuous is
+//     "continuous".
+//   - Unset is not written: the entry has no "layout" key. save() removes a
+//     "layout" key from an entry whose layout is unset, including a key that
+//     held an unknown value.
+//   - A "layout" value other than "single" or "continuous" (another string, a
+//     number, null) reads as unset. It is not corruption: no warning, and the
+//     other fields of the entry still read.
+//   - Project does not compare the layout with detectLayout(). The caller
+//     switches back to the detected mode by calling setFileState with
+//     std::nullopt for layout.
+//   - Unknown fields in the entry are kept on save, as for the other fields.
+//   - This file includes "pdf/PageLayout.h" directly for LayoutMode.
+//
 // M6.1: spec tests for Project (app/src/project/Project.h).
 //
 // Fixture folders are built in a fresh temp directory per test case. No test
@@ -49,6 +73,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include "pdf/PageLayout.h"
 #include "project/Project.h"
 
 #include <nlohmann/json.hpp>
@@ -533,4 +558,180 @@ TEST_CASE("project with version 1 is writable")
     CHECK_FALSE(project->readOnly());
     CHECK(project->warnings().empty());
     checkEmptyProject(*project);
+}
+
+TEST_CASE("project reads layout single and continuous from project.json")
+{
+    TempDir tmp;
+    const fs::path& root = tmp.path();
+    writeFile(projectJson(root), R"({
+        "version": 1,
+        "open_file": "deck.pdf",
+        "files": {
+            "deck.pdf": {"last_page": 4, "zoom": "fit-page", "layout": "single"},
+            "paper.pdf": {"last_page": 0, "zoom": "fit-width", "layout": "continuous"}
+        },
+        "chats": []
+    })");
+
+    const auto project = openOk(root);
+    CHECK(project->warnings().empty());
+    REQUIRE(project->files().count("deck.pdf") == 1);
+    REQUIRE(project->files().count("paper.pdf") == 1);
+    CHECK(project->files().at("deck.pdf").layout == LayoutMode::SinglePage);
+    CHECK(project->files().at("paper.pdf").layout == LayoutMode::Continuous);
+    CHECK(project->files().at("deck.pdf").lastPage == 4);
+    CHECK(project->files().at("deck.pdf").zoom == "fit-page");
+    CHECK(project->fileStateFor("deck.pdf", 10).layout == LayoutMode::SinglePage);
+}
+
+TEST_CASE("project layout round trips and is written only when set")
+{
+    TempDir tmp;
+    const fs::path& root = tmp.path();
+    writeFile(root / "deck.pdf", "x");
+    writeFile(root / "paper.pdf", "x");
+    writeFile(root / "plain.pdf", "x");
+
+    {
+        const auto project = openOk(root);
+        project->setFileState("deck.pdf", FileState{4, "fit-page", LayoutMode::SinglePage});
+        project->setFileState("paper.pdf", FileState{0, "fit-width", LayoutMode::Continuous});
+        project->setFileState("plain.pdf", FileState{2, "fit-width", std::nullopt});
+        saveOk(*project);
+    }
+
+    const json saved = readJson(projectJson(root));
+    CHECK(saved["files"]["deck.pdf"]["layout"] == "single");
+    CHECK(saved["files"]["paper.pdf"]["layout"] == "continuous");
+    REQUIRE(saved["files"].contains("plain.pdf"));
+    CHECK_FALSE(saved["files"]["plain.pdf"].contains("layout"));
+    CHECK(saved["files"]["plain.pdf"]["last_page"] == 2);
+    CHECK(saved["files"]["plain.pdf"]["zoom"] == "fit-width");
+
+    const auto reopened = openOk(root);
+    REQUIRE(reopened->files().count("deck.pdf") == 1);
+    REQUIRE(reopened->files().count("paper.pdf") == 1);
+    REQUIRE(reopened->files().count("plain.pdf") == 1);
+    CHECK(reopened->files().at("deck.pdf").layout == LayoutMode::SinglePage);
+    CHECK(reopened->files().at("paper.pdf").layout == LayoutMode::Continuous);
+    CHECK_FALSE(reopened->files().at("plain.pdf").layout.has_value());
+}
+
+TEST_CASE("project layout key is removed when the choice returns to unset")
+{
+    TempDir tmp;
+    const fs::path& root = tmp.path();
+    writeFile(root / "sample.pdf", "x");
+
+    {
+        const auto project = openOk(root);
+        project->setFileState("sample.pdf", FileState{1, "fit-width", LayoutMode::SinglePage});
+        saveOk(*project);
+    }
+    REQUIRE(readJson(projectJson(root))["files"]["sample.pdf"]["layout"] == "single");
+
+    {
+        // The user switched back to the detected mode.
+        const auto project = openOk(root);
+        REQUIRE(project->files().count("sample.pdf") == 1);
+        CHECK(project->files().at("sample.pdf").layout == LayoutMode::SinglePage);
+        project->setFileState("sample.pdf", FileState{1, "fit-width", std::nullopt});
+        saveOk(*project);
+    }
+
+    const json saved = readJson(projectJson(root));
+    REQUIRE(saved["files"].contains("sample.pdf"));
+    CHECK_FALSE(saved["files"]["sample.pdf"].contains("layout"));
+    CHECK(saved["files"]["sample.pdf"]["last_page"] == 1);
+    CHECK(saved["files"]["sample.pdf"]["zoom"] == "fit-width");
+}
+
+TEST_CASE("project layout reads an unknown value as unset")
+{
+    TempDir tmp;
+    const fs::path& root = tmp.path();
+    writeFile(projectJson(root), R"({
+        "version": 1,
+        "files": {
+            "grid.pdf": {"last_page": 3, "zoom": "fit-page", "layout": "grid"},
+            "number.pdf": {"last_page": 1, "zoom": "fit-width", "layout": 1},
+            "null.pdf": {"last_page": 2, "zoom": "fit-width", "layout": null},
+            "empty.pdf": {"last_page": 0, "zoom": "", "layout": ""}
+        },
+        "chats": []
+    })");
+
+    {
+        const auto project = openOk(root);
+        CHECK(project->warnings().empty());
+        CHECK_FALSE(project->readOnly());
+        for (const char* rel : {"grid.pdf", "number.pdf", "null.pdf", "empty.pdf"}) {
+            INFO("entry: " << rel);
+            REQUIRE(project->files().count(rel) == 1);
+            CHECK_FALSE(project->files().at(rel).layout.has_value());
+        }
+        CHECK(project->files().at("grid.pdf").lastPage == 3);
+        CHECK(project->files().at("grid.pdf").zoom == "fit-page");
+        CHECK(project->files().at("number.pdf").lastPage == 1);
+        CHECK(project->files().at("null.pdf").zoom == "fit-width");
+        saveOk(*project);
+    }
+
+    // Unset is not written, so the unknown values are gone after a save.
+    const json saved = readJson(projectJson(root));
+    for (const char* rel : {"grid.pdf", "number.pdf", "null.pdf", "empty.pdf"}) {
+        INFO("entry: " << rel);
+        REQUIRE(saved["files"].contains(rel));
+        CHECK_FALSE(saved["files"][rel].contains("layout"));
+    }
+    CHECK(saved["files"]["grid.pdf"]["last_page"] == 3);
+}
+
+TEST_CASE("project layout keeps unknown fields on save")
+{
+    TempDir tmp;
+    const fs::path& root = tmp.path();
+    const json fileExtra = {{"color", "yellow"}, {"marks", {4, 5}}};
+    const json topLevelExtra = {{"nested", {1, 2, 3}}};
+
+    json original = {
+        {"version", 1},
+        {"open_file", "deck.pdf"},
+        {"files",
+         {{"deck.pdf",
+           {{"last_page", 3},
+            {"zoom", "fit-page"},
+            {"layout", "single"},
+            {"future_file_field", fileExtra}}},
+          {"other.pdf",
+           {{"last_page", 1},
+            {"zoom", "fit-width"},
+            {"layout", "continuous"},
+            {"future_file_field", 42}}}}},
+        {"chats", json::array()},
+        {"future_top_field", topLevelExtra},
+    };
+    writeFile(projectJson(root), original.dump(2));
+
+    {
+        const auto project = openOk(root);
+        CHECK(project->warnings().empty());
+        // deck.pdf switches back to the detected mode. other.pdf is not touched.
+        project->setFileState("deck.pdf", FileState{5, "fit-page", std::nullopt});
+        saveOk(*project);
+    }
+
+    const json saved = readJson(projectJson(root));
+    REQUIRE(saved.contains("future_top_field"));
+    CHECK(saved["future_top_field"] == topLevelExtra);
+
+    CHECK(saved["files"]["deck.pdf"]["last_page"] == 5);
+    CHECK(saved["files"]["deck.pdf"]["zoom"] == "fit-page");
+    CHECK_FALSE(saved["files"]["deck.pdf"].contains("layout"));
+    REQUIRE(saved["files"]["deck.pdf"].contains("future_file_field"));
+    CHECK(saved["files"]["deck.pdf"]["future_file_field"] == fileExtra);
+
+    CHECK(saved["files"]["other.pdf"]["layout"] == "continuous");
+    CHECK(saved["files"]["other.pdf"]["future_file_field"] == 42);
 }

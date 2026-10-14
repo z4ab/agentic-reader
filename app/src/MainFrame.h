@@ -25,6 +25,7 @@ class wxFileHistory;
 class wxStaticText;
 class wxTextCtrl;
 class wxTimerEvent;
+class wxToggleButton;
 class wxWindow;
 
 // Main application window: menu bar, PDF toolbar, three-pane layout, status bar.
@@ -120,12 +121,16 @@ private:
     void onPositionTimer(wxTimerEvent& event);
     void showPage();
     void showZoom();
+    // Syncs the toolbar toggle with the view's layout mode.
+    void showLayout();
 
     PdfView* m_pdfView = nullptr;
     // Above the PDF view, hidden until Edit > Find (Ctrl+F).
     FindBar* m_findBar = nullptr;
     wxComboBox* m_zoomCombo = nullptr;
     wxTextCtrl* m_pageEntry = nullptr;
+    // Toolbar toggle, on in SinglePage.
+    wxToggleButton* m_layoutToggle = nullptr;
     wxStaticText* m_pageTotal = nullptr;
     // Edit > Ask about selection, also in the PDF context menu.
     int m_askAboutId = wxID_NONE;

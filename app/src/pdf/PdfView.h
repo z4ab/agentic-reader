@@ -32,8 +32,9 @@ class wxScrollWinEvent;
 class wxSizeEvent;
 class wxThreadEvent;
 
-// Continuous vertical scroll of every page of one document. Sends
-// EVT_PDF_PAGE_CHANGED, EVT_PDF_ZOOM_CHANGED, EVT_PDF_SELECTION_CHANGED and
+// One document in one of two layouts: Continuous (vertical scroll of every
+// page) or SinglePage (one shown page, centred). Sends EVT_PDF_PAGE_CHANGED,
+// EVT_PDF_ZOOM_CHANGED, EVT_PDF_LAYOUT_CHANGED, EVT_PDF_SELECTION_CHANGED and
 // EVT_PDF_FIND_CHANGED, and queues EVT_PDF_FILE_DROPPED when a file is dropped
 // on it.
 //
@@ -56,15 +57,22 @@ public:
 
     // Shows `doc` (not null), replacing the current document and clearing the
     // selection. `password` is the one that opened it (empty for an unencrypted
-    // file), so the render thread can open its own copy.
-    void setDocument(std::unique_ptr<PdfDocument> doc, std::string password);
+    // file), so the render thread can open its own copy. `layout` is the mode
+    // to open in, nullopt for detectLayout(). The mode is set before the first
+    // layout, so the document never shows in the other mode.
+    void setDocument(std::unique_ptr<PdfDocument> doc, std::string password,
+                     std::optional<LayoutMode> layout = std::nullopt);
     // Shows no document: stops the render thread, drops cached pages, word
     // boxes and results in flight, and paints the empty pane. Does nothing
     // when no document is open.
     void closeDocument();
 
-    // 0-based page with the most visible area, or -1 with no document.
+    // 0-based page with the most visible area, or -1 with no document. In
+    // SinglePage, the shown page.
     int currentPage() const { return m_currentPage; }
+    LayoutMode layoutMode() const { return m_layoutMode; }
+    // The mode detectLayout() picks for the open document.
+    LayoutMode detectedLayout() const { return m_detectedLayout; }
     int pageCount() const { return static_cast<int>(m_sizes.size()); }
     // Scale factor, 1.0 = 100%.
     double zoom() const { return m_zoom; }
@@ -117,7 +125,13 @@ public:
     // Also scrolls so the whole current page is in view.
     void fitPage();
     // Puts the top edge of the 0-based page at the top of the pane. Clamped.
+    // In SinglePage, shows the page and keeps the zoom.
     void goToPage(int page);
+    // User switch of layout mode. Keeps the current page and applies the new
+    // mode's default zoom (fit width for Continuous, fit page for SinglePage).
+    // Sends EVT_PDF_LAYOUT_CHANGED when the mode changes. Does nothing with no
+    // document.
+    void setLayoutMode(LayoutMode mode);
 
 private:
     // Asks for a 1-based page number and jumps to it (Ctrl+G).
@@ -127,6 +141,8 @@ private:
     // Drops queued renders and results in flight. Call when the render scale changes.
     void invalidateRenders();
 
+    // The page the zoom fits: the shown page in SinglePage, else the current page.
+    int displayedPage() const;
     PageSizePts currentPageSize() const;
     double fitZoom(ZoomMode mode) const;
     // Changes the zoom keeping the document point at client position `anchor` fixed.
@@ -175,6 +191,10 @@ private:
     std::filesystem::path m_path;
     std::vector<PageSizePts> m_sizes;
     PageLayout m_layout;
+    LayoutMode m_layoutMode = LayoutMode::Continuous;
+    LayoutMode m_detectedLayout = LayoutMode::Continuous;
+    // SinglePage only: the page on screen, which m_currentPage then equals.
+    int m_shownPage = 0;
     // Client size from the last size event. wxGTK's GetClientSize() briefly
     // subtracts overlay scrollbars after one shows or hides, and no size event
     // follows to correct it, so layout and scroll clamping use this instead.

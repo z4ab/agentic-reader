@@ -1,0 +1,74 @@
+# M10.2 acceptance, run 1 of 3: slide deck in Single Page, mode switches, View menu.
+# tests/data/slides-16x9.pdf (8 slides, 960 x 540 pt, see make_slides_pdf.py):
+# each slide has "Slide N" in large type and one line "Point <word>: distinct body
+# text for slide N." Run with
+#   scripts/shot.sh -o <repo>/.verify/m10.2/<impl|review|tester>/run1 -s tests/acceptance/m10.2.steps -- ./build/app/agentic-reader tests/data/slides-16x9.pdf
+# or through tests/acceptance/m10.2.sh, which also runs the two project runs.
+#
+# Interface choices where the spec is silent (the implementer conforms or files
+# a TEST DISPUTE):
+#   - The View menu is titled "&View", so Alt+V opens it. Its radio items are
+#     "&Continuous" and "&Single Page", the checked one marked by a radio dot.
+#   - Ctrl+Shift+L toggles the mode. The toolbar toggle has the same effect.
+#   - Page entry (320,48) and Enter jump to a page, as in m2.4.steps.
+#   - A layout change is saved to project.json by the same 1 s debounce as a
+#     page change. Nothing is saved in this run: the file is not in a project.
+#
+# Geometry at the default 1400x900 window, as in m2.4.steps: menu bar y 0..27,
+# toolbar y 28..68, zoom combo text (35,48), page entry (320,48), PDF pane
+# x 225..980 and y 69..875 (client 755x806), pane center (602,472). Status bar
+# field 0 is the open file's name.
+#
+# Single Page of a 960 x 540 page: fit width and fit page are both
+# (755 - 24) / 960 = 76%, the page is 731 x 411 px, centered in the pane:
+# x 237..968, y about 267..677. Continuous at 76% (fit width): page 3's top edge
+# at the top of the pane (y 69 or 81), page 4's top edge about 12 px below its
+# bottom edge, at about y 492.
+wait 3
+
+# Single Page at open (no entry, the mode is detected from the 16:9 pages): one
+# slide, "Slide 1" in large type and its "Point alpha" line inside the grey
+# frame, centered in the PDF pane with grey on every side. Combo "76%", entry
+# "1 / 8", status field 0 "slides-16x9.pdf". No second slide visible.
+shot slides-single
+
+click 320 48
+key ctrl+a
+type 3
+key Return
+wait 2
+
+# Single Page on slide 3: "Slide 3" and "Point charlie" centered in the pane.
+# Entry "3 / 8", combo "76%".
+shot slide-3-single
+
+key ctrl+shift+l
+wait 2
+
+# Ctrl+Shift+L switched to Continuous and kept the page: slide 3's top edge at
+# the top of the pane (y 69 or 81), its "Slide 3" heading and "Point charlie"
+# line at the top, the top of slide 4 (its "Slide 4" heading not yet visible or
+# cut off) below it at about y 492. Entry "3 / 8", combo "76%".
+shot slide-3-continuous
+
+key ctrl+shift+l
+wait 2
+
+# Ctrl+Shift+L switched back to Single Page on slide 3, the same as before the
+# first switch. Entry "3 / 8", combo "76%". Identical in layout to slide-3-single.
+shot slide-3-single-again
+
+key alt+v
+wait 1
+
+# The View menu is open: radio items "Continuous" and "Single Page". "Single
+# Page" is the checked one (radio dot), "Continuous" is not. The slide is still
+# visible behind the menu, on slide 3.
+shot view-menu
+
+key Escape
+wait 1
+
+# The menu is closed. Single Page on slide 3, the same as slide-3-single-again.
+# Entry "3 / 8".
+shot view-menu-closed

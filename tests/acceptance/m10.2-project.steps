@@ -1,0 +1,55 @@
+# M10.2 acceptance, run 2 of 3: a portrait PDF in a saved project switches to
+# Single Page, goes to page 2, and quits. tests/data/sample.pdf is the portrait
+# PDF (3 US Letter pages, headings "Page One", "Page Two", "Page Three"). It is
+# copied to the scratch project /tmp/agentic-reader-m10.2/proj, which has an
+# empty .reader/ so it is a saved project. tests/acceptance/m10.2.sh runs this,
+# then checks .reader/project.json. This run is
+#   scripts/shot.sh -o <out>/run2 -s tests/acceptance/m10.2-project.steps -- \
+#     env HOME=/tmp/agentic-reader-m10.2/home \
+#       READER_SIDECAR_CMD=<worktree>/tests/acceptance/m6.2-fake-sidecar.sh \
+#       READER_FAKE_LOG=/tmp/agentic-reader-m10.2/fake-run2.log \
+#       ./build/app/agentic-reader /tmp/agentic-reader-m10.2/proj/sample.pdf
+#
+# Interface choices are the ones at the top of m10.2.steps. In addition:
+#   - The layout is written to files["sample.pdf"]["layout"] as "single" when
+#     the user switches away from the detected mode (Continuous, a portrait
+#     page), and last_page is saved with the page change (1 s debounce).
+#   - Ctrl+Q saves the project (M6.5 spec), so the last page is in the file
+#     after quit.
+#
+# Geometry as in m10.2.steps and m6.5.steps: the project pane x 0..220 and the
+# PDF pane x 225..980, y 69..875. Fit width of a 612 pt page: (755 - 24) / 612
+# = 119%. Fit page: (806 - 24) / 792 = 99%.
+wait 3
+
+# sample.pdf opened in a saved project: header "proj", tree with sample.pdf.
+# Continuous, the portrait default: "Page One" heading at the top of the page,
+# the page spans the pane width (about x 237..968), combo "119%", entry "1 / 3",
+# status field 0 "sample.pdf". Page 1 is 946 px tall, so its bottom edge is below
+# the pane and page 2 is not visible.
+shot sample-continuous
+
+key ctrl+shift+l
+wait 2
+
+# Ctrl+Shift+L switched a portrait page to Single Page. Fit page: the whole
+# page 1 is in view and centered (about x 300..905, y 81..863), "Page One"
+# near its top, combo "99%", entry "1 / 3". No part of page 2 is visible.
+shot sample-single
+
+click 320 48
+key ctrl+a
+type 2
+key Return
+wait 2
+
+# Page 2 in Single Page: "Page Two" centered, the whole page in view, combo
+# "99%", entry "2 / 3".
+shot sample-single-p2
+
+# Layout "single" and last page 1 (0-based) are written within 2 s of the switch
+# and the page change, with no quit. The state helper is the check.
+run /tmp/agentic-reader-m10.2/state check /tmp/agentic-reader-m10.2/proj sample.pdf 1 single
+
+# Quit saves the project. tests/acceptance/m10.2.sh checks the file after the run.
+key ctrl+q

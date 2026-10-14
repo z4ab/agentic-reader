@@ -1,0 +1,37 @@
+# M10.2 acceptance, run 3 of 3: after a restart, the portrait PDF reopens in
+# Single Page on the same page, and switching back removes "layout" from
+# project.json. Run by tests/acceptance/m10.2.sh after run 2
+# (m10.2-project.steps), with the same scratch HOME and project. This run is
+#   scripts/shot.sh -o <out>/run3 -s tests/acceptance/m10.2-restart.steps -- \
+#     env HOME=/tmp/agentic-reader-m10.2/home \
+#       READER_SIDECAR_CMD=<worktree>/tests/acceptance/m6.2-fake-sidecar.sh \
+#       READER_FAKE_LOG=/tmp/agentic-reader-m10.2/fake-run3.log \
+#       ./build/app/agentic-reader
+# No file on the command line.
+#
+# State after run 2: proj/.reader/project.json has open_file "sample.pdf" and
+# files["sample.pdf"] = last_page 1, layout "single".
+#
+# Interface choices are the ones at the top of m10.2.steps and
+# m10.2-project.steps. In addition, the restored zoom in Single Page is the mode
+# default (fit page, combo "99%"), as the zoom saved in run 2 is the default.
+wait 4
+
+# The restart opened proj and its open file sample.pdf in Single Page: header
+# "proj", tree with sample.pdf, the whole page 2 centered (about x 300..905,
+# y 81..863), "Page Two" near its top, combo "99%", entry "2 / 3", status field
+# 0 "sample.pdf". Page 1 and page 3 are not visible.
+shot restart-single
+
+key ctrl+shift+l
+wait 2
+
+# Ctrl+Shift+L switched back to Continuous (the detected mode for a portrait
+# page) and kept page 2: "Page Two" at the top of the pane, the page spanning
+# the pane width (about x 237..968), combo "119%", entry "2 / 3".
+shot restart-continuous
+
+# The switch back removed the layout: files["sample.pdf"] has last_page 1 and no
+# "layout" key. tests/acceptance/m10.2.sh checks the file again after the run.
+wait 2
+run /tmp/agentic-reader-m10.2/state check /tmp/agentic-reader-m10.2/proj sample.pdf 1 absent

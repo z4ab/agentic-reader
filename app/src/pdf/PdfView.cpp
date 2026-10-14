@@ -1,6 +1,7 @@
 #include "pdf/PdfView.h"
 
 #include "chat/ReaderContext.h"
+#include "pdf/LayoutDetect.h"
 #include "pdf/PdfDocument.h"
 #include "pdf/RenderWorker.h"
 #include "pdf/SearchWorker.h"
@@ -21,6 +22,7 @@
 
 wxDEFINE_EVENT(EVT_PDF_PAGE_CHANGED, wxCommandEvent);
 wxDEFINE_EVENT(EVT_PDF_ZOOM_CHANGED, wxCommandEvent);
+wxDEFINE_EVENT(EVT_PDF_LAYOUT_CHANGED, wxCommandEvent);
 wxDEFINE_EVENT(EVT_PDF_FILE_DROPPED, wxCommandEvent);
 wxDEFINE_EVENT(EVT_PDF_SELECTION_CHANGED, wxCommandEvent);
 wxDEFINE_EVENT(EVT_PDF_FIND_CHANGED, wxCommandEvent);
@@ -30,6 +32,13 @@ namespace {
 constexpr int kWheelLineStep = 20;
 // Up/Down/Left/Right.
 constexpr int kArrowStep = 40;
+// The zoom a layout starts with.
+PdfView::ZoomMode defaultZoomMode(LayoutMode mode)
+{
+    return mode == LayoutMode::SinglePage ? PdfView::ZoomMode::FitPage
+                                          : PdfView::ZoomMode::FitWidth;
+}
+
 const wxColour kBackground(0x80, 0x80, 0x80);
 const wxColour kBorder(0x40, 0x40, 0x40);
 // 35% of 255: the selection highlight's alpha over the system highlight colour.
@@ -104,7 +113,8 @@ PdfView::~PdfView()
     m_searchWorker.reset();
 }
 
-void PdfView::setDocument(std::unique_ptr<PdfDocument> doc, std::string password)
+void PdfView::setDocument(std::unique_ptr<PdfDocument> doc, std::string password,
+                          std::optional<LayoutMode> layout)
 {
     m_doc = std::move(doc);
     m_path = m_doc->path();
@@ -114,6 +124,7 @@ void PdfView::setDocument(std::unique_ptr<PdfDocument> doc, std::string password
         m_sizes.push_back({pts.x, pts.y});
     }
     m_currentPage = -1;
+    m_shownPage = 0;
     endDrag();
     ++m_generation;
     m_documentGeneration = m_generation;
@@ -124,6 +135,12 @@ void PdfView::setDocument(std::unique_ptr<PdfDocument> doc, std::string password
     m_worker = std::make_unique<RenderWorker>(this, m_path, std::move(password));
     m_cache.clear();
     m_textLayer.clear();
+    m_detectedLayout = detectLayout(m_sizes);
+    const LayoutMode previous = m_layoutMode;
+    m_layoutMode = layout.value_or(m_detectedLayout);
+    // A fit zoom follows the new mode's default. A custom zoom is kept.
+    if (m_layoutMode != previous && m_zoomMode != ZoomMode::Custom)
+        m_zoomMode = defaultZoomMode(m_layoutMode);
     if (m_zoomMode != ZoomMode::Custom)
         m_zoom = fitZoom(m_zoomMode);
     relayout();
@@ -263,8 +280,37 @@ void PdfView::goToPage(int page)
 {
     if (!m_doc)
         return;
-    const PageRect r = m_layout.pageRect(std::clamp(page, 0, pageCount() - 1));
+    page = std::clamp(page, 0, pageCount() - 1);
+    if (m_layoutMode == LayoutMode::SinglePage && page != m_shownPage) {
+        m_shownPage = page;
+        relayout();
+    }
+    const PageRect r = m_layout.pageRect(page);
     scrollToOrigin(CalcUnscrolledPosition(wxPoint(0, 0)).x, r.y - PageLayout::kGap);
+}
+
+void PdfView::setLayoutMode(LayoutMode mode)
+{
+    if (!m_doc || mode == m_layoutMode)
+        return;
+    const int page = std::max(m_currentPage, 0);
+    m_layoutMode = mode;
+    m_shownPage = page;
+    m_currentPage = page;
+    m_zoomMode = defaultZoomMode(mode);
+    const double zoom = clampZoom(fitZoom(m_zoomMode));
+    if (zoom != m_zoom) {
+        m_zoom = zoom;
+        invalidateRenders();
+    }
+    relayout();
+    goToPage(page);
+    sendZoomChanged();
+
+    wxCommandEvent event(EVT_PDF_LAYOUT_CHANGED, GetId());
+    event.SetEventObject(this);
+    event.SetInt(static_cast<int>(mode));
+    ProcessWindowEvent(event);
 }
 
 void PdfView::showGoToPageDialog()
@@ -282,7 +328,8 @@ void PdfView::showGoToPageDialog()
 
 void PdfView::relayout()
 {
-    m_layout.compute(m_sizes, m_zoom, m_viewport.x, GetDPIScaleFactor());
+    m_layout.compute(m_sizes, m_zoom, m_viewport.x, GetDPIScaleFactor(), m_layoutMode,
+                     m_shownPage, m_viewport.y);
     SetVirtualSize(m_layout.totalWidth(), m_layout.totalHeight());
     Refresh();
 }
@@ -299,9 +346,14 @@ void PdfView::invalidateRenders()
         m_worker->clear();
 }
 
+int PdfView::displayedPage() const
+{
+    return m_layoutMode == LayoutMode::SinglePage ? m_shownPage : std::max(m_currentPage, 0);
+}
+
 PageSizePts PdfView::currentPageSize() const
 {
-    return m_sizes[static_cast<std::size_t>(std::max(m_currentPage, 0))];
+    return m_sizes[static_cast<std::size_t>(displayedPage())];
 }
 
 double PdfView::fitZoom(ZoomMode mode) const
@@ -363,7 +415,9 @@ void PdfView::updateCurrentPage()
 {
     const wxPoint origin = CalcUnscrolledPosition(wxPoint(0, 0));
     const wxSize& client = m_viewport;
-    const int page = mostVisiblePage(m_layout, {origin.x, origin.y, client.x, client.y});
+    const int page = m_layoutMode == LayoutMode::SinglePage
+                         ? m_shownPage
+                         : mostVisiblePage(m_layout, {origin.x, origin.y, client.x, client.y});
     if (page < 0 || page == m_currentPage)
         return;
 
@@ -422,7 +476,11 @@ void PdfView::onKeyDown(wxKeyEvent& event)
             return;
         case '0':
         case WXK_NUMPAD0:
-            fitWidth();
+            // The current mode's default zoom.
+            if (m_layoutMode == LayoutMode::SinglePage)
+                fitPage();
+            else
+                fitWidth();
             return;
         case 'G':
             showGoToPageDialog();

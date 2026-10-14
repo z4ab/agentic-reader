@@ -31,6 +31,7 @@
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
 #include <wx/textdlg.h>
+#include <wx/tglbtn.h>
 #include <wx/toolbar.h>
 
 #include <algorithm>
@@ -130,6 +131,7 @@ MainFrame::MainFrame()
     startSidecar();
     showPage();
     showZoom();
+    showLayout();
     m_pdfView->SetFocus();
 }
 
@@ -171,8 +173,14 @@ void MainFrame::openFile(const wxString& path)
     else
         saveProjectState();
 
+    // The layout saved for this file, applied before the first layout.
+    const std::string rel = relativeTo(pdf, m_projectRoot);
+    std::optional<LayoutMode> layout;
+    if (m_project && m_project->files().count(rel) != 0)
+        layout = m_project->files().at(rel).layout;
+
     m_findBar->dismiss();
-    m_pdfView->setDocument(std::move(result.doc), std::move(result.password));
+    m_pdfView->setDocument(std::move(result.doc), std::move(result.password), layout);
     restoreFileState();
     m_fileHistory->AddFileToHistory(fullPath);
     saveFileHistory();
@@ -273,7 +281,7 @@ void MainFrame::saveProjectState()
     const FileState state = currentFileState();
     const auto old = m_project->files().find(rel);
     if (old == m_project->files().end() || old->second.lastPage != state.lastPage
-        || old->second.zoom != state.zoom) {
+        || old->second.zoom != state.zoom || old->second.layout != state.layout) {
         m_project->setFileState(rel, state);
         changed = true;
     }
@@ -289,7 +297,12 @@ FileState MainFrame::currentFileState() const
         zoom.kind = ZoomKind::FitWidth;
     else if (m_pdfView->zoomMode() == PdfView::ZoomMode::FitPage)
         zoom.kind = ZoomKind::FitPage;
-    return FileState{std::max(m_pdfView->currentPage(), 0), formatZoom(zoom)};
+    // Stored only when it differs from the detected layout, so the file goes
+    // back to automatic when the user switches back.
+    std::optional<LayoutMode> layout;
+    if (m_pdfView->layoutMode() != m_pdfView->detectedLayout())
+        layout = m_pdfView->layoutMode();
+    return FileState{std::max(m_pdfView->currentPage(), 0), formatZoom(zoom), layout};
 }
 
 void MainFrame::restoreFileState()
@@ -365,6 +378,7 @@ void MainFrame::showOpenedFile()
     GetToolBar()->Realize();
     showPage();
     showZoom();
+    showLayout();
     m_chat->updateContext();
     m_pdfView->SetFocus();
 }
@@ -380,6 +394,7 @@ void MainFrame::closeFile()
     GetToolBar()->Realize();
     showPage();
     showZoom();
+    showLayout();
 }
 
 void MainFrame::saveFileHistory()
@@ -460,6 +475,14 @@ void MainFrame::buildMenuBar()
     editMenu->AppendSeparator();
     editMenu->Append(wxID_PREFERENCES, "&Preferences...");
 
+    // The radio items and Ctrl+Shift+L switch the layout. The key is caught in
+    // the CHAR_HOOK below, so it toggles from any focused control.
+    auto* viewMenu = new wxMenu();
+    const int continuousId = wxWindow::NewControlId();
+    const int singlePageId = wxWindow::NewControlId();
+    viewMenu->AppendRadioItem(continuousId, "&Continuous\tCtrl+Shift+L");
+    viewMenu->AppendRadioItem(singlePageId, "&Single Page\tCtrl+Shift+L");
+
     auto* projectMenu = new wxMenu();
     const int instructionsId = wxWindow::NewControlId();
     projectMenu->Append(instructionsId, "&Instructions...");
@@ -484,6 +507,7 @@ void MainFrame::buildMenuBar()
     auto* menuBar = new wxMenuBar();
     menuBar->Append(fileMenu, "&File");
     menuBar->Append(editMenu, "&Edit");
+    menuBar->Append(viewMenu, "&View");
     menuBar->Append(projectMenu, "&Project");
     menuBar->Append(chatMenu, "&Chat");
     menuBar->Append(helpMenu, "&Help");
@@ -521,6 +545,17 @@ void MainFrame::buildMenuBar()
          stopReplyId);
     Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_findBar->activate(); }, wxID_FIND);
     Bind(wxEVT_MENU, [this](wxCommandEvent&) { askAboutSelection(); }, m_askAboutId);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_pdfView->setLayoutMode(LayoutMode::Continuous); },
+         continuousId);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_pdfView->setLayoutMode(LayoutMode::SinglePage); },
+         singlePageId);
+    for (const int id : {continuousId, singlePageId}) {
+        Bind(wxEVT_UPDATE_UI, [this, continuousId, id](wxUpdateUIEvent& event) {
+            event.Enable(!m_pdfView->filePath().empty());
+            const bool continuous = m_pdfView->layoutMode() == LayoutMode::Continuous;
+            event.Check(id == continuousId ? continuous : !continuous);
+        }, id);
+    }
     Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& event) { event.Enable(m_pdfView->hasSelection()); },
          m_askAboutId);
     // Ahead of the focused control: a GTK text view, such as the chat input,
@@ -528,6 +563,12 @@ void MainFrame::buildMenuBar()
     Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent& event) {
         if (event.GetKeyCode() == 'A' && event.GetModifiers() == (wxMOD_CONTROL | wxMOD_SHIFT)) {
             askAboutSelection();
+            return;
+        }
+        if (event.GetKeyCode() == 'L' && event.GetModifiers() == (wxMOD_CONTROL | wxMOD_SHIFT)) {
+            m_pdfView->setLayoutMode(m_pdfView->layoutMode() == LayoutMode::SinglePage
+                                         ? LayoutMode::Continuous
+                                         : LayoutMode::SinglePage);
             return;
         }
         // Ahead of GTK's focus movement, so Tab does not move focus out of
@@ -572,6 +613,9 @@ void MainFrame::buildToolBar()
     toolBar->AddControl(m_pageEntry);
     m_pageTotal = new wxStaticText(toolBar, wxID_ANY, "/ 0");
     toolBar->AddControl(m_pageTotal);
+    toolBar->AddSeparator();
+    m_layoutToggle = new wxToggleButton(toolBar, wxID_ANY, "Single Page");
+    toolBar->AddControl(m_layoutToggle);
     toolBar->Realize();
 
     m_zoomCombo->Bind(wxEVT_COMBOBOX, &MainFrame::onZoomEntered, this);
@@ -583,6 +627,11 @@ void MainFrame::buildToolBar()
     });
     fitPage->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
         m_pdfView->fitPage();
+        m_pdfView->SetFocus();
+    });
+    m_layoutToggle->Bind(wxEVT_TOGGLEBUTTON, [this](wxCommandEvent& event) {
+        m_pdfView->setLayoutMode(event.IsChecked() ? LayoutMode::SinglePage
+                                                   : LayoutMode::Continuous);
         m_pdfView->SetFocus();
     });
 }
@@ -612,6 +661,10 @@ void MainFrame::buildLayout()
     center->SetSizer(centerSizer);
     m_pdfView->Bind(EVT_PDF_PAGE_CHANGED, &MainFrame::onPdfPageChanged, this);
     m_pdfView->Bind(EVT_PDF_ZOOM_CHANGED, &MainFrame::onPdfZoomChanged, this);
+    m_pdfView->Bind(EVT_PDF_LAYOUT_CHANGED, [this](wxCommandEvent&) {
+        showLayout();
+        schedulePositionSave();
+    });
     m_pdfView->Bind(EVT_PDF_FILE_DROPPED, &MainFrame::onPathDropped, this);
     m_pdfView->Bind(EVT_PDF_SELECTION_CHANGED,
                     [this](wxCommandEvent&) { m_chat->updateContext(true); });
@@ -869,6 +922,12 @@ void MainFrame::showPage()
     const int page = m_pdfView->currentPage();
     m_pageEntry->ChangeValue(page < 0 ? wxString() : wxString::Format("%d", page + 1));
     m_chat->updateContext();
+}
+
+void MainFrame::showLayout()
+{
+    m_layoutToggle->SetValue(m_pdfView->layoutMode() == LayoutMode::SinglePage);
+    m_layoutToggle->Enable(!m_pdfView->filePath().empty());
 }
 
 void MainFrame::showZoom()
