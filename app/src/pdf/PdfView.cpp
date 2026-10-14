@@ -53,6 +53,23 @@ constexpr int kDragThreshold = 3;
 // How far a click may land from the double-click and still be a triple-click.
 constexpr int kMultiClickSlop = 4;
 
+// Clear space kept between a revealed rect and the pane edge (SinglePage).
+constexpr int kRevealMargin = 24;
+
+// Scroll origin along one axis that shows [start, start + length) with
+// kRevealMargin to spare, moving the origin least. A span longer than the pane
+// keeps its start in view.
+int revealOrigin(int origin, int start, int length, int size)
+{
+    const int top = start - kRevealMargin;
+    const int bottom = start + length + kRevealMargin - size;
+    if (top < origin)
+        return top;
+    if (bottom > origin)
+        return std::min(bottom, top);
+    return origin;
+}
+
 // Milliseconds on a clock that never goes back, for the wheel lockout.
 long long monotonicMs()
 {
@@ -1026,21 +1043,46 @@ bool PdfView::isPageVisible(int page) const
            r.x < origin.x + m_viewport.x && r.x + r.w > origin.x;
 }
 
+void PdfView::revealRect(int page, const RectPts& rectPts)
+{
+    if (!m_doc || page < 0 || page >= pageCount())
+        return;
+
+    if (m_layoutMode == LayoutMode::Continuous) {
+        const PageRect r = m_layout.pageToView(page, rectPts);
+        const wxPoint origin = CalcUnscrolledPosition(wxPoint(0, 0));
+        int x = origin.x;
+        int y = origin.y;
+        if (r.x < origin.x || r.x + r.w > origin.x + m_viewport.x)
+            x = r.x + r.w / 2 - m_viewport.x / 2;
+        if (r.y < origin.y || r.y + r.h > origin.y + m_viewport.y)
+            y = r.y + r.h / 2 - m_viewport.y / 2;
+        if (x != origin.x || y != origin.y)
+            scrollToOrigin(x, y);
+        return;
+    }
+
+    if (page != m_shownPage) {
+        // Shows the page at its top edge, as goToPage does. The zoom is kept.
+        m_shownPage = page;
+        relayout();
+        const PageRect pageRect = m_layout.pageRect(page);
+        scrollToOrigin(CalcUnscrolledPosition(wxPoint(0, 0)).x,
+                       pageRect.y - PageLayout::kGap);
+    }
+    const PageRect r = m_layout.pageToView(page, rectPts);
+    const wxPoint origin = CalcUnscrolledPosition(wxPoint(0, 0));
+    const int x = revealOrigin(origin.x, r.x, r.w, m_viewport.x);
+    const int y = revealOrigin(origin.y, r.y, r.h, m_viewport.y);
+    if (x != origin.x || y != origin.y)
+        scrollToOrigin(x, y);
+}
+
 void PdfView::scrollToCurrentMatch()
 {
     const auto [page, match] = findMatch(m_findCurrent);
-    if (!match)
-        return;
-    const PageRect r = m_layout.pageToView(page, *match);
-    const wxPoint origin = CalcUnscrolledPosition(wxPoint(0, 0));
-    int x = origin.x;
-    int y = origin.y;
-    if (r.x < origin.x || r.x + r.w > origin.x + m_viewport.x)
-        x = r.x + r.w / 2 - m_viewport.x / 2;
-    if (r.y < origin.y || r.y + r.h > origin.y + m_viewport.y)
-        y = r.y + r.h / 2 - m_viewport.y / 2;
-    if (x != origin.x || y != origin.y)
-        scrollToOrigin(x, y);
+    if (match)
+        revealRect(page, *match);
 }
 
 void PdfView::onSearchResult(wxThreadEvent& event)

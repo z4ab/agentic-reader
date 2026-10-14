@@ -127,6 +127,11 @@ public:
     // Puts the top edge of the 0-based page at the top of the pane. Clamped.
     // In SinglePage, shows the page and keeps the zoom.
     void goToPage(int page);
+    // Brings a rect in page points on the 0-based `page` into view. Continuous
+    // centres the rect on each axis it is off-screen. SinglePage shows `page` first
+    // when it is not the shown page (top edge, zoom kept), then scrolls the least
+    // needed to keep a 24px margin around the rect. Find uses it for every match.
+    void revealRect(int page, const RectPts& rectPts);
     // The toolbar Previous and Next buttons. SinglePage flips like the keys: back
     // shows the page's bottom, forward its top. Continuous goes to the page top.
     void previousPage();
@@ -178,8 +183,7 @@ private:
     void sendFindChanged();
     // Page and rect of the 0-based match in document order.
     std::pair<int, const RectPts*> findMatch(int index) const;
-    // Scrolls the least needed to show the current match, centered on the axis it
-    // was off.
+    // Reveals the current match (see revealRect).
     void scrollToCurrentMatch();
     bool isPageVisible(int page) const;
     void endDrag();
