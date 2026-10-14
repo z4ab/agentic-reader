@@ -16,6 +16,11 @@ wait 3
 click 600 450
 wait 1
 
+# Since M10.2 this landscape page opens in Single Page. Switch to Continuous so
+# the geometry below holds.
+key ctrl+shift+l
+wait 2
+
 # Start: utf8.pdf at fit width, the line "Café naïve Größe €5" large near the
 # top of the page. Nothing is highlighted.
 shot start
