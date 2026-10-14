@@ -1,0 +1,158 @@
+# M7.5 acceptance: the claude.ai connectors setting in Preferences, and the
+# sidecar env it gives (ENABLE_CLAUDEAI_MCP_SERVERS) after OK.
+#
+# Run from the worktree root with an isolated HOME, an unreachable session bus
+# (the key store is then reliably unavailable, so no key is stored), stray
+# credentials in the app's own environment (spec item 2 must strip them), and
+# the fake sidecar:
+#
+#   H=$(mktemp -d)
+#   O=<repo>/.verify/m7.5/<impl|review|tester>
+#   READER_SIDECAR_CMD="$PWD/tests/acceptance/m7.5-fake-sidecar.sh" \
+#   READER_FAKE_LOG="$H/fake-sidecar.log" \
+#     scripts/shot.sh -o "$O" -s tests/acceptance/m7.5.steps -- \
+#     env HOME="$H" DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent \
+#     ANTHROPIC_API_KEY=sk-ant-test-STRAYKEY0123456789 \
+#     CLAUDE_CODE_OAUTH_TOKEN=stray-oauth-token \
+#     ANTHROPIC_AUTH_TOKEN=stray-auth-token \
+#     ./build/app/agentic-reader
+#   head -n 5 "$H/fake-sidecar.log"
+#   grep -c '^start ' "$H/fake-sidecar.log"
+#   grep -c 'ENABLE_CLAUDEAI_MCP_SERVERS=true' "$H/fake-sidecar.log"
+#   tests/acceptance/m7.1-grep.sh "$H" "$O"
+#
+# Pass: shot.sh exits 0, every shot matches its comment, and
+#   - head -n 5 prints exactly these five lines, in this order (the first sidecar
+#     runs with the connectors off; OK with both boxes checked restarts it with
+#     the connectors on; OK with the local login off restarts it with the
+#     connectors off again, since the setting alone never enables them):
+#       start ANTHROPIC_API_KEY=unset CLAUDE_CODE_OAUTH_TOKEN=unset ANTHROPIC_AUTH_TOKEN=unset READER_MODEL=unset ENABLE_CLAUDEAI_MCP_SERVERS=false
+#       exit
+#       start ANTHROPIC_API_KEY=unset CLAUDE_CODE_OAUTH_TOKEN=unset ANTHROPIC_AUTH_TOKEN=unset READER_MODEL=unset ENABLE_CLAUDEAI_MCP_SERVERS=true
+#       exit
+#       start ANTHROPIC_API_KEY=unset CLAUDE_CODE_OAUTH_TOKEN=unset ANTHROPIC_AUTH_TOKEN=unset READER_MODEL=unset ENABLE_CLAUDEAI_MCP_SERVERS=false
+#   - grep -c '^start ' prints 3 (Cancel restarts nothing),
+#   - grep -c 'ENABLE_CLAUDEAI_MCP_SERVERS=true' prints 1,
+#   - m7.1-grep.sh exits 0 (neither the stray key nor any key, both starting
+#     "sk-ant-tes", reached a config, log, or screenshot dir).
+#
+# The fake sidecar (tests/acceptance/m7.5-fake-sidecar.sh) appends one "start"
+# line per launch to $READER_FAKE_LOG naming which credential variables were
+# set (never their values), the READER_MODEL and ENABLE_CLAUDEAI_MCP_SERVERS
+# values, waits 3 s, prints `ready`, and appends "exit" on stdin EOF.
+#
+# Not covered here: the connector permission prompt (needs a real connector on
+# a claude.ai account; see the human check in the task notes), and the key path
+# (needs a working secret service; tests/test_sidecar_restart.cpp covers the
+# env for it).
+#
+# Assumptions (the spec is silent):
+#   - The Preferences dialog is opened as in M7.1 and M7.2: Alt+E, P, with
+#     focus in the key field.
+#   - Tab order: key field, Show, Test key, model field, local login check
+#     box, connectors check box. The connectors check box is created after the
+#     local login check box, so it is next in Tab order. The help line is not
+#     focusable. A disabled check box is skipped by Tab.
+#   - Return in the model field is OK, as in M7.2.
+#   - "Settings changed, sidecar restarted" is in the status bar, as in M7.2.
+#   - OK stops the running sidecar before it starts the new one. Cancel does
+#     not restart it.
+
+# Main window, no dialog open. The status bar reads "Assistant ready": the
+# first fake sidecar is up with the connectors off.
+wait 5
+shot ready
+
+key alt+e
+wait 1
+key p
+wait 2
+
+# Preferences is open. "Use my local Claude Code login (developer)" is
+# unchecked. Under it, the check box "Use my claude.ai connectors (Gmail,
+# Drive, ...)" is unchecked and greyed out (disabled), with the help line
+# "Lets the assistant use the connectors on your claude.ai account. It asks
+# before each use." under it. The text is readable and nothing is cut off.
+shot prefs-local-off
+
+# From the key field: Tab x4 reaches the local login check box. Space checks it.
+key Tab Tab Tab Tab
+key space
+wait 1
+
+# The local login check box is checked. The connectors check box is now
+# enabled: its text is normal, not greyed out, and it is still unchecked.
+shot prefs-local-on
+
+key Tab
+key space
+wait 1
+
+# The connectors check box is checked and enabled. The local login check box
+# is still checked. The help line is still visible.
+shot prefs-connectors-on
+
+key shift+Tab shift+Tab
+key Return
+wait 1
+
+# The dialog is closed and no message box is open. The status bar reads
+# "Settings changed, sidecar restarted". It does not read "Assistant ready" or
+# "Assistant stopped, restarting..." and shows no error.
+shot restarted
+
+wait 5
+
+# The restarted fake sidecar is up: the status bar reads "Assistant ready".
+# No error dialog.
+shot ready-again
+
+key alt+e
+wait 1
+key p
+wait 2
+
+# The reopened dialog shows the saved settings: "Use my local Claude Code
+# login (developer)" is checked, and the connectors check box is checked and
+# enabled.
+shot reopened
+
+# From the key field: Tab x4 reaches the local login check box. Space unchecks it.
+key Tab Tab Tab Tab
+key space
+wait 1
+
+# The local login check box is unchecked. The connectors check box is greyed
+# out (disabled) but still checked. The help line is still visible.
+shot local-off-connectors-disabled
+
+key shift+Tab
+key Return
+wait 1
+
+# The dialog is closed and no message box is open. The status bar reads
+# "Settings changed, sidecar restarted" and shows no error.
+shot restarted-local-off
+
+wait 5
+
+# The restarted fake sidecar is up: the status bar reads "Assistant ready".
+shot ready-after-local-off
+
+key alt+e
+wait 1
+key p
+wait 2
+
+# The reopened dialog shows the saved settings: the local login check box is
+# unchecked, and the connectors check box is checked but disabled (greyed
+# out). The stored setting was kept while the local login is off.
+shot reopened-local-off
+
+key Escape
+wait 5
+
+# Cancel changed nothing: the dialog is closed, the status bar still reads
+# "Assistant ready", and no new "Settings changed, sidecar restarted" message
+# appeared. No error dialog.
+shot cancelled

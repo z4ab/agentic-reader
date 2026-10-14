@@ -27,8 +27,8 @@ public:
 // wxSecretStore, its isOk() is false and says so.
 std::unique_ptr<KeyStore> makeSystemKeyStore();
 
-// The app's settings: the API key in the key store, the model and the dev
-// login toggle in wxConfig. The key never goes to wxConfig, and there is no
+// The app's settings: the API key in the key store, the model and the
+// developer toggles in wxConfig. The key never goes to wxConfig, and there is no
 // plain-text fallback when the key store is unavailable.
 class Settings
 {
@@ -47,6 +47,11 @@ public:
     bool useLocalLogin() const;
     void setUseLocalLogin(bool on);
 
+    // "Use my claude.ai connectors (Gmail, Drive, ...)". Off by default. It
+    // takes effect only with the local login on.
+    bool useClaudeAiConnectors() const;
+    void setUseClaudeAiConnectors(bool on);
+
     bool keyStoreAvailable(wxString* why = nullptr) const;
 
     // The stored key, or empty when none is stored or the store is unavailable.
@@ -58,8 +63,9 @@ public:
     bool setApiKey(const wxString& key, wxString* error = nullptr);
 
     // The sidecar's environment for the current settings: buildSidecarEnv()
-    // over `inherited`, plus ENABLE_CLAUDEAI_MCP_SERVERS=false. Reads the key
-    // store only when the local login is off.
+    // over `inherited`, plus ENABLE_CLAUDEAI_MCP_SERVERS. It is "true" only
+    // when useLocalLogin() and useClaudeAiConnectors() are both on, else
+    // "false". Reads the key store only when the local login is off.
     std::map<wxString, wxString> sidecarEnv(const std::map<wxString, wxString>& inherited) const;
 
 private:

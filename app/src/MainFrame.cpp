@@ -878,7 +878,7 @@ void MainFrame::onPreferences(wxCommandEvent& /*event*/)
     // and never leaves this function.
     auto snapshot = [this] {
         return std::make_tuple(m_settings->model(), m_settings->useLocalLogin(),
-                               m_settings->apiKey());
+                               m_settings->useClaudeAiConnectors(), m_settings->apiKey());
     };
     const auto before = snapshot();
     SettingsDialog dialog(this, *m_settings);

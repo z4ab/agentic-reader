@@ -11,6 +11,7 @@ namespace
 
 constexpr const char* kModelEntry = "/Agent/Model";
 constexpr const char* kLocalLoginEntry = "/Agent/UseLocalLogin";
+constexpr const char* kClaudeAiConnectorsEntry = "/Agent/UseClaudeAiConnectors";
 
 #if wxUSE_SECRETSTORE
 
@@ -122,6 +123,17 @@ void Settings::setUseLocalLogin(bool on)
     m_config.Flush();
 }
 
+bool Settings::useClaudeAiConnectors() const
+{
+    return m_config.ReadBool(kClaudeAiConnectorsEntry, false);
+}
+
+void Settings::setUseClaudeAiConnectors(bool on)
+{
+    m_config.Write(kClaudeAiConnectorsEntry, on);
+    m_config.Flush();
+}
+
 bool Settings::keyStoreAvailable(wxString* why) const
 {
     return m_keys.isOk(why);
@@ -169,9 +181,11 @@ std::map<wxString, wxString> Settings::sidecarEnv(
 {
     const bool local = useLocalLogin();
     auto env = buildSidecarEnv(inherited, local, model(), local ? wxString() : apiKey());
-    // The app's assistant never uses the account's claude.ai MCP connectors
-    // (Gmail, Drive, ...), which the CLI loads with a local login.
-    env["ENABLE_CLAUDEAI_MCP_SERVERS"] = "false";
+    // The CLI loads the claude.ai connectors (Gmail, Drive, ...) only with a
+    // local login, and only when the user has turned them on. API-key mode
+    // never loads them.
+    const bool connectors = local && useClaudeAiConnectors();
+    env["ENABLE_CLAUDEAI_MCP_SERVERS"] = connectors ? "true" : "false";
     return env;
 }
 

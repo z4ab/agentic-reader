@@ -12,7 +12,8 @@ class wxStaticText;
 class wxTextCtrl;
 
 // Edit > Preferences: the API key (masked, with Show and Test key), the model,
-// and the developer local-login toggle. OK saves through Settings.
+// the developer local-login toggle, and the claude.ai connectors toggle. OK
+// saves through Settings.
 class SettingsDialog : public wxDialog
 {
 public:
@@ -23,6 +24,7 @@ private:
     wxString enteredKey() const;
     void onShowKey(wxCommandEvent& event);
     void onTestKey(wxCommandEvent& event);
+    void onLocalLoginChanged(wxCommandEvent& event);
     void onOk(wxCommandEvent& event);
 
     Settings& m_settings;
@@ -36,6 +38,7 @@ private:
     wxStaticText* m_testStatus = nullptr;
     wxTextCtrl* m_model = nullptr;
     wxCheckBox* m_localLogin = nullptr;
+    wxCheckBox* m_connectors = nullptr;
 
     std::unique_ptr<KeyTester> m_tester;
 };

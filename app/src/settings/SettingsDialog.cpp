@@ -73,11 +73,24 @@ SettingsDialog::SettingsDialog(wxWindow* parent, Settings& settings)
                               "instead of the API key."),
              row);
 
+    // claude.ai connectors. Enabled only with the local login, since the CLI
+    // loads them only then.
+    m_connectors =
+        new wxCheckBox(this, wxID_ANY, "Use my claude.ai connectors (Gmail, Drive, ...)");
+    m_connectors->SetValue(m_settings.useClaudeAiConnectors());
+    m_connectors->Enable(m_localLogin->GetValue());
+    top->Add(m_connectors, row);
+    top->Add(new wxStaticText(this, wxID_ANY,
+                              "Lets the assistant use the connectors on your claude.ai account. "
+                              "It asks before each use."),
+             row);
+
     top->Add(CreateSeparatedButtonSizer(wxOK | wxCANCEL), wxSizerFlags().Expand().Border());
     SetSizerAndFit(top);
     CentreOnParent();
 
     m_showKey->Bind(wxEVT_CHECKBOX, &SettingsDialog::onShowKey, this);
+    m_localLogin->Bind(wxEVT_CHECKBOX, &SettingsDialog::onLocalLoginChanged, this);
     testKey->Bind(wxEVT_BUTTON, &SettingsDialog::onTestKey, this);
     Bind(wxEVT_BUTTON, &SettingsDialog::onOk, this, wxID_OK);
 
@@ -123,6 +136,11 @@ void SettingsDialog::onTestKey(wxCommandEvent& /*event*/)
     });
 }
 
+void SettingsDialog::onLocalLoginChanged(wxCommandEvent& /*event*/)
+{
+    m_connectors->Enable(m_localLogin->GetValue());
+}
+
 void SettingsDialog::onOk(wxCommandEvent& /*event*/)
 {
     const wxString key = enteredKey();
@@ -135,6 +153,7 @@ void SettingsDialog::onOk(wxCommandEvent& /*event*/)
     }
     m_settings.setModel(m_model->GetValue().Trim(true).Trim(false));
     m_settings.setUseLocalLogin(m_localLogin->GetValue());
+    m_settings.setUseClaudeAiConnectors(m_connectors->GetValue());
     m_tester->cancel();
     EndModal(wxID_OK);
 }

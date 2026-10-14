@@ -205,6 +205,158 @@ TEST_CASE("Settings::sidecarEnv applies the settings and disables claude.ai conn
     CHECK(keys.loads == 0);
 }
 
+// M7.5 (tester): the claude.ai connectors setting.
+//
+// Interface choices (the spec names only the two methods):
+//   - Settings::useClaudeAiConnectors() const and
+//     Settings::setUseClaudeAiConnectors(bool on). The setter flushes the
+//     config, like setUseLocalLogin().
+//   - The config key is not named here. The round-trip case reads the value
+//     back through a new wxFileConfig on the same file, so any key works.
+//   - sidecarEnv() sets ENABLE_CLAUDEAI_MCP_SERVERS to "true" only when the
+//     local login and the setting are both on. Otherwise it is "false".
+//   - Only ENABLE_CLAUDEAI_MCP_SERVERS depends on the setting. The other
+//     entries of sidecarEnv() are the same with it on or off.
+
+TEST_CASE("claude.ai connectors setting is off by default")
+{
+    wxStringInputStream empty(wxString{});
+    wxFileConfig config(empty);
+    FakeKeyStore keys;
+    Settings settings(config, keys);
+    CHECK_FALSE(settings.useClaudeAiConnectors());
+}
+
+TEST_CASE_FIXTURE(Fixture, "claude.ai connectors setting round-trips through the config file")
+{
+    const std::string path = (dir / "reader.conf").string();
+    auto open = [&] {
+        return std::make_unique<wxFileConfig>(wxEmptyString, wxEmptyString, path, wxEmptyString,
+                                              wxCONFIG_USE_LOCAL_FILE);
+    };
+    FakeKeyStore keys;
+    {
+        auto config = open();
+        Settings settings(*config, keys);
+        settings.setUseClaudeAiConnectors(true);
+    }
+    {
+        auto config = open();
+        Settings settings(*config, keys);
+        CHECK(settings.useClaudeAiConnectors());
+        settings.setUseClaudeAiConnectors(false);
+    }
+    {
+        auto config = open();
+        Settings settings(*config, keys);
+        CHECK_FALSE(settings.useClaudeAiConnectors());
+    }
+}
+
+TEST_CASE("sidecarEnv in API-key mode gives ENABLE_CLAUDEAI_MCP_SERVERS=false with the setting on or off")
+{
+    wxStringInputStream empty(wxString{});
+    wxFileConfig config(empty);
+    FakeKeyStore keys;
+    keys.secret = "sk-ant-test-FAKEKEY0123456789";
+    Settings settings(config, keys);
+    const Env inherited{{"PATH", "/bin"}};
+    const Env expected{{"PATH", "/bin"},
+                       {"ANTHROPIC_API_KEY", keys.secret},
+                       {"ENABLE_CLAUDEAI_MCP_SERVERS", "false"}};
+
+    settings.setUseClaudeAiConnectors(false);
+    CHECK(settings.sidecarEnv(inherited) == expected);
+    settings.setUseClaudeAiConnectors(true);
+    CHECK(settings.sidecarEnv(inherited) == expected);
+}
+
+TEST_CASE("sidecarEnv with local login and the setting off gives ENABLE_CLAUDEAI_MCP_SERVERS=false")
+{
+    wxStringInputStream empty(wxString{});
+    wxFileConfig config(empty);
+    FakeKeyStore keys;
+    keys.secret = "sk-ant-test-FAKEKEY0123456789";
+    Settings settings(config, keys);
+    settings.setUseLocalLogin(true);
+    settings.setUseClaudeAiConnectors(false);
+
+    const Env env = settings.sidecarEnv(Env{{"PATH", "/bin"}});
+    CHECK(env == Env{{"PATH", "/bin"}, {"ENABLE_CLAUDEAI_MCP_SERVERS", "false"}});
+}
+
+TEST_CASE("sidecarEnv with local login and the setting on gives ENABLE_CLAUDEAI_MCP_SERVERS=true")
+{
+    wxStringInputStream empty(wxString{});
+    wxFileConfig config(empty);
+    FakeKeyStore keys;
+    keys.secret = "sk-ant-test-FAKEKEY0123456789";
+    Settings settings(config, keys);
+    settings.setUseLocalLogin(true);
+    settings.setModel("claude-test-model");
+    settings.setUseClaudeAiConnectors(true);
+
+    const Env env = settings.sidecarEnv(Env{{"PATH", "/bin"}});
+    CHECK(env == Env{{"PATH", "/bin"},
+                     {"READER_MODEL", "claude-test-model"},
+                     {"ENABLE_CLAUDEAI_MCP_SERVERS", "true"}});
+    // The local login never reads the key store, with the setting on too.
+    CHECK(keys.loads == 0);
+}
+
+TEST_CASE("the connectors setting changes only ENABLE_CLAUDEAI_MCP_SERVERS in sidecarEnv")
+{
+    wxStringInputStream empty(wxString{});
+    wxFileConfig config(empty);
+    FakeKeyStore keys;
+    keys.secret = "sk-ant-test-FAKEKEY0123456789";
+    Settings settings(config, keys);
+    const Env inherited{{"PATH", "/bin"},
+                        {"HOME", "/home/tester"},
+                        {"LANG", "C"},
+                        {"READER_MODEL", "inherited-model"},
+                        {"ANTHROPIC_API_KEY", "sk-ant-test-STRAY0123456789"},
+                        {"CLAUDE_CODE_OAUTH_TOKEN", "stray-oauth-token"}};
+
+    for (const bool local : {false, true}) {
+        settings.setUseLocalLogin(local);
+        settings.setUseClaudeAiConnectors(false);
+        Env off = settings.sidecarEnv(inherited);
+        settings.setUseClaudeAiConnectors(true);
+        Env on = settings.sidecarEnv(inherited);
+
+        CHECK(off["ENABLE_CLAUDEAI_MCP_SERVERS"] == "false");
+        CHECK(on["ENABLE_CLAUDEAI_MCP_SERVERS"] == (local ? "true" : "false"));
+        off.erase("ENABLE_CLAUDEAI_MCP_SERVERS");
+        on.erase("ENABLE_CLAUDEAI_MCP_SERVERS");
+        CHECK(on == off);
+        CHECK(on["PATH"] == "/bin");
+        CHECK(on["HOME"] == "/home/tester");
+        CHECK(on["LANG"] == "C");
+        CHECK(on["READER_MODEL"] == "inherited-model");
+        CHECK(on.count("CLAUDE_CODE_OAUTH_TOKEN") == 0);
+        if (local)
+            CHECK(on.count("ANTHROPIC_API_KEY") == 0);
+        else
+            CHECK(on["ANTHROPIC_API_KEY"] == keys.secret);
+    }
+}
+
+TEST_CASE("the connectors setting is kept when the local login is turned off")
+{
+    wxStringInputStream empty(wxString{});
+    wxFileConfig config(empty);
+    FakeKeyStore keys;
+    keys.secret = "sk-ant-test-FAKEKEY0123456789";
+    Settings settings(config, keys);
+    settings.setUseClaudeAiConnectors(true);
+    settings.setUseLocalLogin(true);
+    settings.setUseLocalLogin(false);
+
+    CHECK(settings.useClaudeAiConnectors());
+    CHECK(settings.sidecarEnv(Env{{"PATH", "/bin"}})["ENABLE_CLAUDEAI_MCP_SERVERS"] == "false");
+}
+
 int main(int argc, char** argv)
 {
     wxInitializer init;
