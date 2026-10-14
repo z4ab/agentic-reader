@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace {
 
@@ -84,4 +85,37 @@ ViewPoint zoomScrollOrigin(const PageLayout& before, const PageLayout& after, Vi
     const PageRect r1 = after.pageRect(page);
     return {mapAxis(x, r0.x, r0.w, r1.x, r1.w) - anchor.x,
             mapAxis(y, r0.y, r0.h, r1.y, r1.h) - anchor.y};
+}
+
+WheelFlip::Step WheelFlip::onWheel(int rotation, int wheelDelta, long long nowMs,
+                                   bool pageFitsVertically, bool atTopEdge, bool atBottomEdge,
+                                   int page, int pageCount)
+{
+    constexpr long long kFlipLockoutMs = 150;
+    if (rotation == 0 || wheelDelta <= 0)
+        return {};
+    if (m_hasFlipped && nowMs - m_lastFlipMs < kFlipLockoutMs)
+        return {};
+
+    const int dir = rotation < 0 ? 1 : -1;
+    // Toward open content on an overflowing page: scroll, do not accumulate.
+    if (!pageFitsVertically) {
+        const bool contentAhead = dir > 0 ? !atBottomEdge : !atTopEdge;
+        if (contentAhead) {
+            m_accumulated = 0;
+            return {0, true};
+        }
+    }
+
+    m_accumulated += rotation;
+    if (std::abs(m_accumulated) < wheelDelta)
+        return {};
+    m_accumulated = 0;
+
+    const int target = page + dir;
+    if (target < 0 || target >= pageCount)
+        return {};
+    m_hasFlipped = true;
+    m_lastFlipMs = nowMs;
+    return {dir, false};
 }

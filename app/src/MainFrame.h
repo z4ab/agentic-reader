@@ -18,6 +18,7 @@ class Project;
 class ProjectPanel;
 class Settings;
 class SidecarClient;
+class wxButton;
 class wxCloseEvent;
 class wxComboBox;
 class wxCommandEvent;
@@ -131,6 +132,9 @@ private:
     wxTextCtrl* m_pageEntry = nullptr;
     // Toolbar toggle, on in SinglePage.
     wxToggleButton* m_layoutToggle = nullptr;
+    // Toolbar Previous and Next page buttons, on with a document in both layouts.
+    wxButton* m_prevPageButton = nullptr;
+    wxButton* m_nextPageButton = nullptr;
     wxStaticText* m_pageTotal = nullptr;
     // Edit > Ask about selection, also in the PDF context menu.
     int m_askAboutId = wxID_NONE;

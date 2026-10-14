@@ -1,0 +1,177 @@
+# M10.3 acceptance: Single Page navigation on tests/data/slides-16x9.pdf (8 slides;
+# slide N has "Slide N" in large type and "Point <word>: distinct body text for slide N.",
+# see tests/data/make_slides_pdf.py). Run through tests/acceptance/m10.3.sh, which
+# copies the deck into a saved project and turns on the developer login, so the chat
+# input is shown. The plain command
+#   scripts/shot.sh -o <repo>/.verify/m10.3/<impl|review|tester> -s tests/acceptance/m10.3.steps -- ./build/app/agentic-reader tests/data/slides-16x9.pdf
+# runs the same steps, but shows the API key banner instead of the chat input.
+#
+# Interface choices where the spec is silent (the implementer conforms or files a TEST DISPUTE):
+#   - The toolbar gains "Previous" and "Next" buttons after the "Single Page" toggle, in
+#     that order. Their centers are about (540, 48) and (610, 48).
+#   - Button 5 is one wheel notch down (next slide). Button 4 is one notch up (previous).
+#   - Each step ends with a 0.3 s pause. Two notches inside 150 ms therefore need one
+#     step: run xdotool click --repeat 2 --delay 40 5.
+#
+# Geometry at the default 1400x900 window, as in m10.2.steps: toolbar y 28..68, zoom
+# combo (35,48), page entry (320,48), "/ 8" at about (360,48), "Single Page" toggle
+# x 384..489. PDF pane x 225..980, y 69..875, center (602,472). Chat input at about
+# (1180, 800). Single Page at 76%: the slide is at x 237..968, y 267..677, grey above and
+# below it. (602,150) is grey in Single Page and a blank part of slide 3 in Continuous, so
+# a click there only moves focus to the PDF view.
+#
+# Every shot says the page entry ("N / 8") and the slide on screen. Combo "76%" throughout.
+wait 3
+click 602 150
+
+# Single Page at open (the deck is 16:9, so it opens in Single Page). "Slide 1" and
+# "Point alpha" are centered in the grey frame. Entry "1 / 8".
+shot slide-1
+
+# Right goes forward. "Slide 2" and "Point bravo". Entry "2 / 8".
+key Right
+wait 1
+shot key-right
+
+# PgDn (Next) goes forward. "Slide 3" and "Point charlie". Entry "3 / 8".
+key Next
+wait 1
+shot key-pgdn
+
+# Space goes forward. "Slide 4" and "Point delta". Entry "4 / 8".
+key space
+wait 1
+shot key-space
+
+# N goes forward. "Slide 5" and "Point echo". Entry "5 / 8".
+key n
+wait 1
+shot key-n
+
+# Left goes back. "Slide 4" and "Point delta". Entry "4 / 8".
+key Left
+wait 1
+shot key-left
+
+# PgUp (Prior) goes back. "Slide 3" and "Point charlie". Entry "3 / 8".
+key Prior
+wait 1
+shot key-pgup
+
+# Shift+Space goes back. "Slide 2" and "Point bravo". Entry "2 / 8".
+key shift+space
+wait 1
+shot key-shift-space
+
+# P goes back. "Slide 1" and "Point alpha". Entry "1 / 8".
+key p
+wait 1
+shot key-p
+
+# End goes to the last page. "Slide 8" and "Point hotel". Entry "8 / 8".
+key End
+wait 1
+shot key-end
+
+# Wheel down on the last slide does not flip past it. Still "Slide 8", entry "8 / 8".
+click 602 472 5
+wait 1
+shot wheel-past-last
+
+# Home goes to the first page. "Slide 1" and "Point alpha". Entry "1 / 8".
+key Home
+wait 1
+shot key-home
+
+# Down flips when the slide fits. "Slide 2", entry "2 / 8".
+key Down
+wait 1
+shot key-down
+
+# Up flips back. "Slide 1", entry "1 / 8".
+key Up
+wait 1
+shot key-up
+
+# The Previous button on the first slide does not flip before it. Still "Slide 1",
+# entry "1 / 8".
+click 540 48
+wait 1
+shot button-prev-first
+
+# Wheel up on the first slide does not flip before it. Still "Slide 1", entry "1 / 8".
+click 602 472 4
+wait 1
+shot wheel-past-first
+
+# One wheel notch down flips one slide. "Slide 2", entry "2 / 8".
+click 602 472 5
+wait 1
+shot wheel-notch-down
+
+# Two notches 40 ms apart, the second inside 150 ms of the flip, flip one slide only.
+# "Slide 3", entry "3 / 8". Not "Slide 4".
+run xdotool click --repeat 2 --delay 40 5
+wait 1
+shot wheel-burst
+
+# A notch more than 150 ms after the last flip flips again. "Slide 4", entry "4 / 8".
+click 602 472 5
+wait 1
+shot wheel-after-lockout
+
+# Wheel up flips back one slide. "Slide 3", entry "3 / 8".
+click 602 472 4
+wait 1
+shot wheel-notch-up
+
+# The Previous button goes back one slide. "Slide 2", entry "2 / 8".
+click 540 48
+wait 1
+shot button-prev
+
+# The Next button goes forward one slide. "Slide 3", entry "3 / 8".
+click 610 48
+wait 1
+shot button-next
+
+# Ctrl+Shift+L switches to Continuous and keeps page 3. Slide 3's top edge is at the top of
+# the pane (y 69 or 81), its "Slide 3" heading and "Point charlie" line are at the top, and
+# the top of slide 4 is below it at about y 492. Entry "3 / 8".
+key ctrl+shift+l
+wait 2
+shot continuous-slide-3
+
+# The Previous button in Continuous goes to page 2. "Slide 2" heading at the top of the
+# pane, entry "2 / 8".
+click 540 48
+wait 2
+shot continuous-prev-to-slide-2
+
+# The Next button in Continuous goes to page 3. "Slide 3" heading at the top of the pane,
+# entry "3 / 8". Identical in layout to continuous-slide-3.
+click 610 48
+wait 2
+shot continuous-next-to-slide-3
+
+# In Continuous, Right and Space do not flip (their old behaviour, nothing happens on a
+# fitting width). The screen is identical to continuous-next-to-slide-3, entry "3 / 8".
+click 602 150
+key Right
+wait 1
+key space
+wait 1
+shot continuous-right-space
+
+# Ctrl+Shift+L switches back to Single Page on slide 3. "Slide 3" is centered, entry
+# "3 / 8", the same as button-next.
+key ctrl+shift+l
+wait 2
+shot single-slide-3
+
+# Click the chat input and type "N p n" (the spaces are Space presses too). The input
+# shows "N p n". The PDF still shows "Slide 3", entry "3 / 8". No flip.
+click 1180 800
+type N p n
+wait 1
+shot chat-input-no-flip

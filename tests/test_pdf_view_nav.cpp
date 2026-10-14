@@ -305,3 +305,164 @@ TEST_CASE("EVT_PDF_PAGE_CHANGED carries the 0-based page in the int")
     CHECK(event.GetEventType() == EVT_PDF_PAGE_CHANGED);
     CHECK(event.GetInt() == 41);
 }
+
+// M10.3: spec tests for the Single Page wheel flip helper, WheelFlip in ViewNav.h.
+//
+// Interface choices where the spec is silent:
+//   - WheelFlip is a default-constructible struct in ViewNav.h with no wx dependency.
+//     It holds the accumulated wheel rotation and the time of the last flip:
+//       struct WheelFlip {
+//           struct Step {
+//               int flip = 0;      // -1 previous page, +1 next page, 0 no flip
+//               bool pan = false;  // true: the wheel pans the overflowing page instead
+//           };
+//           Step onWheel(int rotation, int wheelDelta, long long nowMs,
+//                        bool pageFitsVertically, bool atTopEdge, bool atBottomEdge,
+//                        int page, int pageCount);
+//       };
+//   - rotation is GetWheelRotation() of one event: positive is up, -120 is one notch down.
+//     wheelDelta is GetWheelDelta(), 120 here. nowMs is a monotonic clock in ms. A fresh
+//     WheelFlip is never locked out, whatever nowMs is (the first test starts at 0).
+//   - Accumulation: rotation adds to an accumulator. A flip happens when the accumulator
+//     reaches one wheelDelta in either direction, then the accumulator resets to 0.
+//     Tests use exact multiples (-40 three times is -120).
+//   - Lockout: an event is ignored (flip 0, pan false, nothing accumulates) when
+//     nowMs - lastFlipMs < 150. The lockout runs from the last flip, not from the last
+//     ignored event. The event at exactly 150 ms is not ignored.
+//   - Direction: rotation < 0 (wheel down) is forward (+1). rotation > 0 is back (-1).
+//   - Fitting page (pageFitsVertically true): the wheel never pans. Each full notch flips.
+//     The edge flags are passed as true in these tests.
+//   - Overflowing page: a notch that still has content to scroll toward returns pan = true,
+//     flip 0, and resets the accumulator. That is wheel down while !atBottomEdge, or wheel
+//     up while !atTopEdge (wheel up at the bottom edge pans back up). A notch toward the
+//     edge it is at (wheel down at atBottomEdge, wheel up at atTopEdge) accumulates like a
+//     fitting page and flips one page on the first full notch. Accumulation across pan
+//     events is not tested.
+//   - No flip when the target page is out of range: before page 0 or past pageCount - 1.
+//     Such a notch returns flip 0 and pan false.
+
+namespace {
+
+constexpr int kNotch = 120;
+constexpr int kDeckPages = 8;
+
+// One wheel event on a fitting page. A fitting page is at both edges, so the flags are true.
+int fitFlip(WheelFlip& wf, int rotation, long long nowMs, int page, int pageCount = kDeckPages)
+{
+    return wf.onWheel(rotation, kNotch, nowMs, true, true, true, page, pageCount).flip;
+}
+
+} // namespace
+
+TEST_CASE("WheelFlip: one notch flips one page, wheel down is next and wheel up is previous")
+{
+    WheelFlip down;
+    const auto forward = down.onWheel(-kNotch, kNotch, 0, true, true, true, 0, kDeckPages);
+    CHECK(forward.flip == 1);
+    CHECK_FALSE(forward.pan);
+
+    WheelFlip up;
+    const auto back = up.onWheel(kNotch, kNotch, 0, true, true, true, 3, kDeckPages);
+    CHECK(back.flip == -1);
+    CHECK_FALSE(back.pan);
+}
+
+TEST_CASE("WheelFlip: a burst of notches inside 150 ms after a flip flips once")
+{
+    WheelFlip wf;
+    // The first notch flips. The four after it, all inside the lockout, do not.
+    int flips = 0;
+    for (long long t : {0LL, 10LL, 30LL, 50LL, 149LL})
+        flips += fitFlip(wf, -kNotch, t, 0);
+    CHECK(flips == 1);
+}
+
+TEST_CASE("WheelFlip: partial rotations accumulate to one flip")
+{
+    WheelFlip wf;
+    CHECK(fitFlip(wf, -40, 0, 0) == 0);
+    CHECK(fitFlip(wf, -40, 10, 0) == 0);
+    CHECK(fitFlip(wf, -40, 20, 0) == 1);
+}
+
+TEST_CASE("WheelFlip: a notch 150 ms after a flip flips again, 149 ms after does not")
+{
+    WheelFlip wf;
+    CHECK(fitFlip(wf, -kNotch, 0, 0) == 1);
+    // Still locked out at 149 ms, so this notch is ignored.
+    CHECK(fitFlip(wf, -kNotch, 149, 1) == 0);
+    // Locked out from the flip at 0, not from the ignored notch at 149: 150 ms is free.
+    CHECK(fitFlip(wf, -kNotch, 150, 1) == 1);
+}
+
+TEST_CASE("WheelFlip: notches ignored in the lockout do not accumulate")
+{
+    WheelFlip wf;
+    CHECK(fitFlip(wf, -kNotch, 0, 0) == 1);
+    CHECK(fitFlip(wf, -60, 50, 1) == 0);
+    CHECK(fitFlip(wf, -60, 100, 1) == 0);
+    // Free again. The two ignored half notches added nothing, so this half notch does not flip.
+    CHECK(fitFlip(wf, -60, 200, 1) == 0);
+    CHECK(fitFlip(wf, -60, 210, 1) == 1);
+}
+
+TEST_CASE("WheelFlip: an overflowing page pans toward the bottom, then one notch at the bottom flips")
+{
+    WheelFlip wf;
+    // Page 0 overflows and starts at its top edge. Wheel down pans until the bottom edge.
+    for (long long t : {0LL, 200LL, 400LL}) {
+        const auto pan = wf.onWheel(-kNotch, kNotch, t, false, true, false, 0, kDeckPages);
+        CHECK(pan.pan);
+        CHECK(pan.flip == 0);
+    }
+    // At the bottom edge the first full notch flips forward.
+    const auto step = wf.onWheel(-kNotch, kNotch, 600, false, false, true, 0, kDeckPages);
+    CHECK(step.flip == 1);
+    CHECK_FALSE(step.pan);
+}
+
+TEST_CASE("WheelFlip: an overflowing page pans toward the top, then one notch at the top flips back")
+{
+    WheelFlip wf;
+    // Page 3 overflows and is in the middle. Wheel up pans, and so does wheel up at the bottom edge.
+    const auto mid = wf.onWheel(kNotch, kNotch, 0, false, false, false, 3, kDeckPages);
+    CHECK(mid.pan);
+    CHECK(mid.flip == 0);
+    const auto bottom = wf.onWheel(kNotch, kNotch, 200, false, false, true, 3, kDeckPages);
+    CHECK(bottom.pan);
+    CHECK(bottom.flip == 0);
+    // At the top edge the first full notch flips back.
+    const auto step = wf.onWheel(kNotch, kNotch, 400, false, true, false, 3, kDeckPages);
+    CHECK(step.flip == -1);
+    CHECK_FALSE(step.pan);
+}
+
+TEST_CASE("WheelFlip: no flip before the first page")
+{
+    WheelFlip fits;
+    CHECK(fitFlip(fits, kNotch, 0, 0) == 0);
+
+    WheelFlip overflow;
+    const auto step = overflow.onWheel(kNotch, kNotch, 0, false, true, false, 0, kDeckPages);
+    CHECK(step.flip == 0);
+}
+
+TEST_CASE("WheelFlip: no flip past the last page")
+{
+    WheelFlip fits;
+    CHECK(fitFlip(fits, -kNotch, 0, kDeckPages - 1) == 0);
+
+    WheelFlip overflow;
+    const auto step = overflow.onWheel(-kNotch, kNotch, 0, false, false, true, kDeckPages - 1, kDeckPages);
+    CHECK(step.flip == 0);
+}
+
+TEST_CASE("WheelFlip: a one-page or empty document never flips")
+{
+    WheelFlip one;
+    CHECK(fitFlip(one, -kNotch, 0, 0, 1) == 0);
+    WheelFlip oneUp;
+    CHECK(fitFlip(oneUp, kNotch, 0, 0, 1) == 0);
+    WheelFlip empty;
+    CHECK(fitFlip(empty, -kNotch, 0, 0, 0) == 0);
+}

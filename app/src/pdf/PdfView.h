@@ -127,6 +127,10 @@ public:
     // Puts the top edge of the 0-based page at the top of the pane. Clamped.
     // In SinglePage, shows the page and keeps the zoom.
     void goToPage(int page);
+    // The toolbar Previous and Next buttons. SinglePage flips like the keys: back
+    // shows the page's bottom, forward its top. Continuous goes to the page top.
+    void previousPage();
+    void nextPage();
     // User switch of layout mode. Keeps the current page and applies the new
     // mode's default zoom (fit width for Continuous, fit page for SinglePage).
     // Sends EVT_PDF_LAYOUT_CHANGED when the mode changes. Does nothing with no
@@ -151,6 +155,14 @@ private:
     // Scrolls to the virtual DIP origin, clamped to the scroll range.
     void scrollToOrigin(int x, int y);
     void scrollByPixels(int dx, int dy);
+    // SinglePage keys. Returns false for a key it does not take.
+    bool singlePageKey(int key, bool shift);
+    // SinglePage: shows the page `delta` (+1 or -1) away when it exists. Forward
+    // shows its top, back its bottom. Keeps the zoom.
+    void flipPage(int delta);
+    // SinglePage Up/Down: scrolls 40px within an overflowing page, and flips at
+    // its edge. A page that fits flips at once.
+    void stepSinglePage(int dir);
     void updateCurrentPage();
     void sendZoomChanged();
 
@@ -204,6 +216,8 @@ private:
     int m_currentPage = -1;
     // Ctrl+wheel rotation not yet turned into a zoom step.
     int m_zoomWheelRotation = 0;
+    // SinglePage wheel: accumulated rotation and the last flip's time.
+    WheelFlip m_wheelFlip;
     PageCache m_cache;
     TextLayer m_textLayer;
     // Results from an older generation are dropped. Their text is kept when the

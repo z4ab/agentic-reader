@@ -616,6 +616,10 @@ void MainFrame::buildToolBar()
     toolBar->AddSeparator();
     m_layoutToggle = new wxToggleButton(toolBar, wxID_ANY, "Single Page");
     toolBar->AddControl(m_layoutToggle);
+    m_prevPageButton = new wxButton(toolBar, wxID_ANY, "Previous");
+    toolBar->AddControl(m_prevPageButton);
+    m_nextPageButton = new wxButton(toolBar, wxID_ANY, "Next");
+    toolBar->AddControl(m_nextPageButton);
     toolBar->Realize();
 
     m_zoomCombo->Bind(wxEVT_COMBOBOX, &MainFrame::onZoomEntered, this);
@@ -632,6 +636,14 @@ void MainFrame::buildToolBar()
     m_layoutToggle->Bind(wxEVT_TOGGLEBUTTON, [this](wxCommandEvent& event) {
         m_pdfView->setLayoutMode(event.IsChecked() ? LayoutMode::SinglePage
                                                    : LayoutMode::Continuous);
+        m_pdfView->SetFocus();
+    });
+    m_prevPageButton->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        m_pdfView->previousPage();
+        m_pdfView->SetFocus();
+    });
+    m_nextPageButton->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        m_pdfView->nextPage();
         m_pdfView->SetFocus();
     });
 }
@@ -928,6 +940,8 @@ void MainFrame::showLayout()
 {
     m_layoutToggle->SetValue(m_pdfView->layoutMode() == LayoutMode::SinglePage);
     m_layoutToggle->Enable(!m_pdfView->filePath().empty());
+    m_prevPageButton->Enable(!m_pdfView->filePath().empty());
+    m_nextPageButton->Enable(!m_pdfView->filePath().empty());
 }
 
 void MainFrame::showZoom()

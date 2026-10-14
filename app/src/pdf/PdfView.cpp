@@ -16,6 +16,7 @@
 #include <wx/textdlg.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <utility>
@@ -51,6 +52,13 @@ const wxColour kCurrentMatchFill(0xff, 0x78, 0x00, 0xa6);
 constexpr int kDragThreshold = 3;
 // How far a click may land from the double-click and still be a triple-click.
 constexpr int kMultiClickSlop = 4;
+
+// Milliseconds on a clock that never goes back, for the wheel lockout.
+long long monotonicMs()
+{
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
 
 // Queues EVT_PDF_FILE_DROPPED on the view for the first dropped file.
 class FileDropTarget : public wxFileDropTarget
@@ -289,6 +297,26 @@ void PdfView::goToPage(int page)
     scrollToOrigin(CalcUnscrolledPosition(wxPoint(0, 0)).x, r.y - PageLayout::kGap);
 }
 
+void PdfView::previousPage()
+{
+    if (!m_doc)
+        return;
+    if (m_layoutMode == LayoutMode::SinglePage)
+        flipPage(-1);
+    else
+        goToPage(m_currentPage - 1);
+}
+
+void PdfView::nextPage()
+{
+    if (!m_doc)
+        return;
+    if (m_layoutMode == LayoutMode::SinglePage)
+        flipPage(1);
+    else
+        goToPage(m_currentPage + 1);
+}
+
 void PdfView::setLayoutMode(LayoutMode mode)
 {
     if (!m_doc || mode == m_layoutMode)
@@ -411,6 +439,81 @@ void PdfView::scrollByPixels(int dx, int dy)
     scrollToOrigin(origin.x + dx, origin.y + dy);
 }
 
+bool PdfView::singlePageKey(int key, bool shift)
+{
+    switch (key) {
+    case WXK_RIGHT:
+    case WXK_NUMPAD_RIGHT:
+    case WXK_PAGEDOWN:
+    case WXK_NUMPAD_PAGEDOWN:
+    case 'N':
+        flipPage(1);
+        return true;
+    case WXK_LEFT:
+    case WXK_NUMPAD_LEFT:
+    case WXK_PAGEUP:
+    case WXK_NUMPAD_PAGEUP:
+    case 'P':
+        flipPage(-1);
+        return true;
+    case WXK_SPACE:
+        flipPage(shift ? -1 : 1);
+        return true;
+    case WXK_HOME:
+    case WXK_NUMPAD_HOME:
+        goToPage(0);
+        return true;
+    case WXK_END:
+    case WXK_NUMPAD_END:
+        goToPage(pageCount() - 1);
+        return true;
+    case WXK_DOWN:
+    case WXK_NUMPAD_DOWN:
+        stepSinglePage(1);
+        return true;
+    case WXK_UP:
+    case WXK_NUMPAD_UP:
+        stepSinglePage(-1);
+        return true;
+    default:
+        return false;
+    }
+}
+
+void PdfView::flipPage(int delta)
+{
+    const int target = m_shownPage + delta;
+    if (!m_doc || target < 0 || target >= pageCount())
+        return;
+    const int x = CalcUnscrolledPosition(wxPoint(0, 0)).x;
+    m_shownPage = target;
+    relayout();
+    const PageRect r = m_layout.pageRect(target);
+    // Forward shows the new page's top edge, back shows its bottom edge.
+    const int y = delta > 0 ? r.y - PageLayout::kGap
+                            : r.y + r.h + PageLayout::kGap - m_viewport.y;
+    scrollToOrigin(x, y);
+}
+
+void PdfView::stepSinglePage(int dir)
+{
+    const int totalHeight = m_layout.totalHeight();
+    if (totalHeight <= m_viewport.y) {
+        flipPage(dir);
+        return;
+    }
+    const int y = CalcUnscrolledPosition(wxPoint(0, 0)).y;
+    if (dir > 0 && y >= totalHeight - m_viewport.y) {
+        flipPage(1);
+        return;
+    }
+    if (dir < 0 && y <= 0) {
+        flipPage(-1);
+        return;
+    }
+    scrollByPixels(0, dir * kArrowStep);
+}
+
 void PdfView::updateCurrentPage()
 {
     const wxPoint origin = CalcUnscrolledPosition(wxPoint(0, 0));
@@ -493,6 +596,12 @@ void PdfView::onKeyDown(wxKeyEvent& event)
             return;
         }
     }
+    // SinglePage takes plain keys, and Shift+Space for Previous.
+    if (m_layoutMode == LayoutMode::SinglePage && m_doc
+        && (!event.HasAnyModifiers() || (event.GetModifiers() == wxMOD_SHIFT && key == WXK_SPACE))
+        && singlePageKey(key, event.ShiftDown())) {
+        return;
+    }
     if (event.HasAnyModifiers()) {
         event.Skip();
         return;
@@ -552,6 +661,21 @@ void PdfView::onMouseWheel(wxMouseEvent& event)
         if (steps != 0)
             applyZoom(stepZoom(m_zoom, steps), ZoomMode::Custom, {event.GetX(), event.GetY()});
         return;
+    }
+
+    if (m_layoutMode == LayoutMode::SinglePage && m_doc
+        && event.GetWheelAxis() == wxMOUSE_WHEEL_VERTICAL) {
+        const wxPoint origin = CalcUnscrolledPosition(wxPoint(0, 0));
+        const int maxY = std::max(0, m_layout.totalHeight() - m_viewport.y);
+        const WheelFlip::Step step = m_wheelFlip.onWheel(
+            rotation, delta, monotonicMs(), m_layout.totalHeight() <= m_viewport.y,
+            origin.y <= 0, origin.y >= maxY, m_shownPage, pageCount());
+        if (step.flip != 0) {
+            flipPage(step.flip);
+            return;
+        }
+        if (!step.pan)
+            return;
     }
 
     const double notches = static_cast<double>(rotation) / delta;

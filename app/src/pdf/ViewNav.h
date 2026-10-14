@@ -30,3 +30,26 @@ int mostVisiblePage(const PageLayout& layout, const PageRect& viewRect);
 // around it do not. The result is not clamped to the scroll range.
 ViewPoint zoomScrollOrigin(const PageLayout& before, const PageLayout& after, ViewPoint origin,
                            ViewPoint anchor);
+
+// Single Page wheel: decides, per wheel event, whether to flip a page, pan the
+// overflowing page, or do nothing. Holds the accumulated rotation and the time
+// of the last flip. Times are monotonic milliseconds.
+struct WheelFlip
+{
+    struct Step
+    {
+        int flip = 0;     // -1 previous page, +1 next page, 0 no flip
+        bool pan = false; // true: the wheel pans the overflowing page instead
+    };
+
+    // rotation is one event's GetWheelRotation() (-120 is one notch down), wheelDelta
+    // is GetWheelDelta(). Wheel down (rotation < 0) is forward.
+    // An event within 150 ms of the last flip is ignored and does not accumulate.
+    Step onWheel(int rotation, int wheelDelta, long long nowMs, bool pageFitsVertically,
+                 bool atTopEdge, bool atBottomEdge, int page, int pageCount);
+
+private:
+    int m_accumulated = 0;
+    bool m_hasFlipped = false;
+    long long m_lastFlipMs = 0;
+};
