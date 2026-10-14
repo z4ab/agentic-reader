@@ -1,0 +1,152 @@
+# M9.1 acceptance: keyboard shortcuts for the agent chat. Run through
+# tests/acceptance/m9.1.sh (fixture, scratch HOME, slow fake sidecar).
+#
+# Layout these coordinates assume (1400x900 window at the screen origin, no
+# window manager, as in m5.2.steps and m6.4.steps): project panel x 0..225,
+# PDF pane x 225..980, chat pane x 980..1400. The chat input is at about
+# (1180, 800), Send and Stop in the row below it, the message view covers
+# (1190, 300). The PDF view is at (600, 600).
+#
+# Interface choices where the spec is silent:
+#   - The menu bar title is "&Chat", so Alt+C opens the Chat menu. Its items
+#     are "&New Chat\tCtrl+N", "&Focus Chat Input\tCtrl+L", a separator, and
+#     "&Stop Reply" (no accelerator in the label; Esc is wired in the frame).
+#   - A reply is slow: one text_delta every 0.5 s, 40 pieces (about 20 s).
+#   - "permit" in a prompt makes the fake ask for a Write permission on
+#     notes.md, so the permission dialog opens and waits for an answer.
+#   - Clicking outside an open menu closes it. The steps do not press Esc
+#     with a menu open, because the menu takes Esc for itself.
+wait 4
+
+# Start: the PDF shows paper.pdf page 1, the project panel lists paper.pdf,
+# the chat pane is empty with an empty input and Send enabled. No red notice.
+shot start
+
+key alt+c
+wait 1
+
+# The Chat menu is open below the menu bar, between Project and Help. It lists
+# "New Chat" with Ctrl+N, "Focus Chat Input" with Ctrl+L, a separator, then
+# "Stop Reply", greyed out because no reply runs. All items show their labels.
+shot chat-menu-idle
+
+click 1190 300
+wait 1
+
+click 600 600
+key ctrl+l
+type PDF-FOCUS
+wait 1
+
+# Ctrl+L pressed with the PDF view focused moved the caret into the chat input:
+# the text "PDF-FOCUS" appears in the input at the bottom of the chat pane. The
+# PDF page shows no typed text. No reply was sent, no red notice.
+shot focus-from-pdf
+
+key ctrl+a
+key BackSpace
+click 110 300
+key ctrl+l
+type PANEL-FOCUS
+wait 1
+
+# Same from the project panel (clicked at (110, 300)): "PANEL-FOCUS" is in the
+# chat input, and the project panel shows no typed text.
+shot focus-from-panel
+
+key ctrl+a
+key BackSpace
+click 1190 300
+key ctrl+l
+type VIEW-FOCUS
+wait 1
+
+# Same from the message view: "VIEW-FOCUS" is in the chat input. The message
+# view shows no typed text and no message was sent.
+shot focus-from-view
+
+key ctrl+a
+key BackSpace
+click 1180 800
+type IDLE-ESC
+key Escape
+wait 1
+
+# Esc with no reply running does nothing. The input still reads "IDLE-ESC".
+# The message view is empty: no grey "Stopped." line, no red notice.
+shot escape-idle
+
+key ctrl+a
+key BackSpace
+click 1180 800
+type SLOW reply please
+key Return
+wait 3
+
+# Mid-stream: the message view shows "SLOW reply please" and the reply's
+# "Slow part N of 40." pieces, a few of them (about 4 to 8). Stop is enabled,
+# Send is greyed out. The input is empty.
+shot slow-streaming
+
+key Escape
+wait 2
+
+# Esc stopped the reply. The pieces already shown stay, and a grey "Stopped."
+# line follows them. The reply has fewer than 40 pieces. Send is enabled, Stop
+# is greyed out. No red notice.
+shot esc-stopped
+
+click 1180 800
+type SLOW menu check
+key Return
+wait 3
+key ctrl+n
+wait 1
+
+# A second reply runs ("SLOW menu check" and its pieces are in the view). Ctrl+N
+# pressed during the reply did nothing: the same messages are still shown, the
+# reply keeps streaming, and no new empty chat appears.
+shot ctrl-n-while-running
+
+key alt+c
+wait 1
+
+# The Chat menu while the reply runs: "New Chat Ctrl+N" is greyed out,
+# "Focus Chat Input Ctrl+L" is enabled, and "Stop Reply" is enabled.
+shot chat-menu-running
+
+click 1190 300
+wait 1
+click 1180 800
+wait 1
+key Escape
+wait 2
+
+# Esc from the input stopped this reply: a grey "Stopped." line follows
+# "SLOW menu check" and its pieces. No red notice.
+shot esc-stopped-2
+
+key ctrl+n
+wait 2
+
+# Ctrl+N with no reply running started a new chat. The message view is empty
+# (the earlier messages are not shown). The chat list has a new untitled entry
+# selected. No red notice.
+shot ctrl-n-new-chat
+
+click 1180 800
+type permit a write to notes
+key Return
+wait 2
+
+# A permission dialog for the Write tool (notes.md) is open over the window.
+# Esc belongs to this dialog here, so it must still be on screen.
+shot permission-dialog
+
+key Escape
+wait 3
+
+# Esc denied the request: the dialog is gone. The message view shows "Checking
+# permission.", then "Permission reply: deny.", and the reply ended with Send
+# enabled and Stop greyed out. No "Stopped." line and no red notice.
+shot permission-denied

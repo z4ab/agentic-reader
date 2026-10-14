@@ -464,6 +464,16 @@ void MainFrame::buildMenuBar()
     const int instructionsId = wxWindow::NewControlId();
     projectMenu->Append(instructionsId, "&Instructions...");
 
+    // Between Project and Help. The shortcuts work from anywhere in the window.
+    auto* chatMenu = new wxMenu();
+    const int newChatId = wxWindow::NewControlId();
+    chatMenu->Append(newChatId, "&New Chat\tCtrl+N");
+    const int focusChatId = wxWindow::NewControlId();
+    chatMenu->Append(focusChatId, "&Focus Chat Input\tCtrl+L");
+    chatMenu->AppendSeparator();
+    const int stopReplyId = wxWindow::NewControlId();
+    chatMenu->Append(stopReplyId, "&Stop Reply");
+
     auto* helpMenu = new wxMenu();
     helpMenu->Append(wxID_ABOUT, "&About");
 
@@ -471,6 +481,7 @@ void MainFrame::buildMenuBar()
     menuBar->Append(fileMenu, "&File");
     menuBar->Append(editMenu, "&Edit");
     menuBar->Append(projectMenu, "&Project");
+    menuBar->Append(chatMenu, "&Chat");
     menuBar->Append(helpMenu, "&Help");
     SetMenuBar(menuBar);
 
@@ -488,6 +499,16 @@ void MainFrame::buildMenuBar()
     // unsaved, can have one.
     Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& event) { event.Enable(!m_projectRoot.empty()); },
          instructionsId);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+        m_chat->newChat();
+        m_chat->focusInput();
+    }, newChatId);
+    Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& event) { event.Enable(m_chat->canNewChat()); },
+         newChatId);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_chat->focusInput(); }, focusChatId);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_chat->stop(); }, stopReplyId);
+    Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& event) { event.Enable(m_chat->canStop()); },
+         stopReplyId);
     Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_findBar->activate(); }, wxID_FIND);
     Bind(wxEVT_MENU, [this](wxCommandEvent&) { askAboutSelection(); }, m_askAboutId);
     Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& event) { event.Enable(m_pdfView->hasSelection()); },
@@ -497,6 +518,13 @@ void MainFrame::buildMenuBar()
     Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent& event) {
         if (event.GetKeyCode() == 'A' && event.GetModifiers() == (wxMOD_CONTROL | wxMOD_SHIFT)) {
             askAboutSelection();
+            return;
+        }
+        // Esc stops a running reply. A modal dialog takes its own Esc, so this
+        // hook does not see it.
+        if (event.GetKeyCode() == WXK_ESCAPE && event.GetModifiers() == wxMOD_NONE
+            && m_chat->canStop()) {
+            m_chat->stop();
             return;
         }
         event.Skip();

@@ -590,7 +590,8 @@ void ChatPanel::onResult(const protocol::Result& result)
     std::string error;
     if (!m_chats->addResult(m_chatId, m_replyText, result, error))
         noteSaveError(error);
-    endReply(resultFooter(result));
+    // A reply the user stopped may still end with `result` after the interrupt.
+    endReply(m_stopRequested ? greyHtml("Stopped.") : resultFooter(result));
     refreshChatList();
 }
 
@@ -807,6 +808,22 @@ void ChatPanel::stop()
     updateButtons();
 }
 
+bool ChatPanel::canNewChat() const
+{
+    return m_chats != nullptr && !m_running;
+}
+
+bool ChatPanel::canStop() const
+{
+    return m_running && !m_stopRequested;
+}
+
+void ChatPanel::focusInput()
+{
+    if (m_input->IsShown())
+        m_input->SetFocus();
+}
+
 void ChatPanel::endReply(const std::string& trailerHtml)
 {
     m_historyHtml += m_replyHtml + markdown::toHtml(m_reply) + trailerHtml;
@@ -822,7 +839,7 @@ void ChatPanel::endReply(const std::string& trailerHtml)
 void ChatPanel::updateButtons()
 {
     m_send->Enable(m_available && !m_running);
-    m_stop->Enable(m_running && !m_stopRequested);
+    m_stop->Enable(canStop());
     m_retry->Enable(m_available && !m_running);
     const bool retry = !m_retryText.empty() && !m_running && !m_setupNeeded && !m_keyRejected;
     const bool cont = !m_running && m_cannotResume.contains(m_chatId);
@@ -832,7 +849,7 @@ void ChatPanel::updateButtons()
         m_buttons->Layout();
     }
     // Chats change only between replies.
-    const bool chats = m_chats != nullptr && !m_running;
+    const bool chats = canNewChat();
     m_chatChoice->Enable(chats && !m_choiceIds.empty());
     m_newChat->Enable(chats);
     m_rename->Enable(chats && m_chats->find(m_chatId));

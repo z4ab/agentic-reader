@@ -106,6 +106,19 @@ public:
     // available again and reopens the selected chat in the new sidecar.
     void onSidecarRestarted(const wxString& notice);
 
+    // Creates a chat and selects it. Does nothing while a reply runs.
+    void newChat();
+    // Interrupts the running reply (the Stop button, Esc). Does nothing when
+    // no reply runs or a stop was already sent.
+    void stop();
+    // True while New chat can run (a project is open and no reply runs).
+    bool canNewChat() const;
+    // True while Stop can run: a reply runs and no stop was sent yet.
+    bool canStop() const;
+    // Moves the caret into the input. Does nothing while the input is hidden
+    // behind the setup or key banner.
+    void focusInput();
+
 private:
     bool canSend() const;
     void send();
@@ -113,13 +126,10 @@ private:
     // value: Retry passes m_retryText, which this clears.
     void startReply(std::string text, std::optional<protocol::Context> context);
     void retry();
-    void stop();
 
     // Shows chat `id` with its transcript and opens it in the sidecar unless
     // this sidecar has it open already.
     void selectChat(const std::string& id);
-    // Creates a chat and selects it.
-    void newChat();
     // Sends new_chat or resume_chat for `id`, unless the sidecar has it open
     // or it cannot resume.
     void openChat(const std::string& id);
