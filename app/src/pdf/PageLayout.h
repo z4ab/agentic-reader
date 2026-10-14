@@ -49,7 +49,10 @@ struct PagePoint
     PointPts pt;
 };
 
-// Pure layout math for a continuous vertical page stack. Page indices are 0-based.
+// Continuous: pages stacked vertically. SinglePage: only the shown page has a rect.
+enum class LayoutMode { Continuous, SinglePage };
+
+// Pure layout math for a page layout. Page indices are 0-based.
 class PageLayout
 {
 public:
@@ -57,8 +60,11 @@ public:
     static constexpr int kGap = 12;
 
     // dpiScale affects only render resolution, never the layout rects.
+    // shownPage and viewportHeight apply only to SinglePage. viewportHeight 0
+    // means the page plus margins.
     void compute(const std::vector<PageSizePts>& sizes, double zoom, int viewportWidth,
-                 double dpiScale);
+                 double dpiScale, LayoutMode mode = LayoutMode::Continuous, int shownPage = 0,
+                 int viewportHeight = 0);
 
     int pageCount() const { return static_cast<int>(m_rects.size()); }
     PageRect pageRect(int page) const;
@@ -81,6 +87,8 @@ public:
 
 private:
     std::vector<PageRect> m_rects;
+    LayoutMode m_mode = LayoutMode::Continuous;
+    int m_shown = -1; // SinglePage only: the shown page, or -1 when none.
     double m_zoom = 1.0;
     int m_totalWidth = 0;
     int m_totalHeight = kGap;

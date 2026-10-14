@@ -29,12 +29,32 @@
 //   - visiblePages returns ascending indices of pages whose rect overlaps
 //     viewRect with positive area (rects are half-open, touching edges do not count).
 //   - Empty input gives pageCount 0, totalHeight kGap, pageAt -1, no visible pages.
+//
+// M10.1: SinglePage mode, and the ViewNav fit helpers on a 16:9 page. Interface choices:
+//   - PageLayout.h gains, in the global namespace:
+//       enum class LayoutMode { Continuous, SinglePage };
+//       void compute(const std::vector<PageSizePts>& sizes, double zoom, int viewportWidth,
+//                    double dpiScale, LayoutMode mode = LayoutMode::Continuous,
+//                    int shownPage = 0, int viewportHeight = 0);
+//     The existing four-argument calls still compile and keep their output, so no
+//     existing test was changed.
+//   - Continuous ignores shownPage and viewportHeight.
+//   - SinglePage: pageCount() is the number of pages passed in. Every page except
+//     shownPage has pageRect {0, 0, 0, 0}. The shown page's origin is
+//     x = (totalWidth - w) / 2 and y = (totalHeight - h) / 2 (integer division).
+//   - totalWidth = max(viewportWidth, shown w + 2 * kGap).
+//     totalHeight = max(viewportHeight, shown h + 2 * kGap). viewportHeight 0 means
+//     the page plus margins.
+//   - pageAt, visiblePages and viewToPage consider only the shown page.
+//   - pageToView on a page that is not shown returns {0, 0, 0, 0}, as for an invalid page.
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "pdf/PageLayout.h"
+#include "pdf/ViewNav.h"
 
 #include <doctest/doctest.h>
 
+#include <cmath>
 #include <vector>
 
 namespace {
@@ -172,4 +192,194 @@ TEST_CASE("empty document")
     CHECK(l.totalHeight() == 12);
     CHECK(l.pageAt(0) == -1);
     CHECK(l.visiblePages({0, 0, 1000, 1000}).empty());
+}
+
+namespace {
+
+const PageSizePts kLetterPage{612, 792};
+const PageSizePts kSlidePage{960, 540};
+
+PageLayout makeSingle(const std::vector<PageSizePts>& sizes, int shown, double zoom, int vw,
+                      int vh)
+{
+    PageLayout l;
+    l.compute(sizes, zoom, vw, 1.0, LayoutMode::SinglePage, shown, vh);
+    return l;
+}
+
+bool sameRect(PageRect a, PageRect b)
+{
+    return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+}
+
+} // namespace
+
+TEST_CASE("SinglePage gives a rect only to the shown page")
+{
+    auto l = makeSingle(kLetter3, 1, 1.0, 1000, 800);
+    REQUIRE(l.pageCount() == 3);
+    CHECK(sameRect(l.pageRect(0), {0, 0, 0, 0}));
+    CHECK(sameRect(l.pageRect(2), {0, 0, 0, 0}));
+    CHECK(l.pageRect(1).w == 612);
+    CHECK(l.pageRect(1).h == 792);
+}
+
+TEST_CASE("SinglePage centres the shown page on both axes")
+{
+    auto l = makeSingle(kLetter3, 0, 1.0, 1000, 1000);
+    CHECK(l.totalWidth() == 1000);
+    CHECK(l.totalHeight() == 1000);
+    CHECK(sameRect(l.pageRect(0), {194, 104, 612, 792}));
+
+    const std::vector<PageSizePts> mixed = {kLetterPage, kLetterPage, kSlidePage};
+    auto m = makeSingle(mixed, 2, 1.0, 1200, 800);
+    CHECK(m.totalWidth() == 1200);
+    CHECK(m.totalHeight() == 800);
+    CHECK(sameRect(m.pageRect(2), {120, 130, 960, 540}));
+}
+
+TEST_CASE("SinglePage total size is page plus margins when the viewport is smaller")
+{
+    auto l = makeSingle(kLetter3, 0, 1.0, 300, 400);
+    CHECK(l.totalWidth() == 612 + 2 * 12);
+    CHECK(l.totalHeight() == 792 + 2 * 12);
+    CHECK(sameRect(l.pageRect(0), {12, 12, 612, 792}));
+}
+
+TEST_CASE("SinglePage total size takes the viewport where it is larger than the page")
+{
+    auto l = makeSingle(kLetter3, 2, 1.0, 1000, 400);
+    CHECK(l.totalWidth() == 1000);
+    CHECK(l.totalHeight() == 792 + 2 * 12);
+    CHECK(sameRect(l.pageRect(2), {194, 12, 612, 792}));
+}
+
+TEST_CASE("SinglePage zoom scales the shown page and centres it")
+{
+    auto l = makeSingle(kLetter3, 1, 0.5, 1000, 1000);
+    CHECK(sameRect(l.pageRect(1), {347, 302, 306, 396}));
+    CHECK(sameRect(l.pageRect(0), {0, 0, 0, 0}));
+}
+
+TEST_CASE("SinglePage total width uses the shown page, not the widest page")
+{
+    const std::vector<PageSizePts> sizes = {{2000, 100}, kLetterPage};
+    auto l = makeSingle(sizes, 1, 1.0, 1000, 1000);
+    CHECK(l.totalWidth() == 1000);
+    CHECK(l.totalHeight() == 1000);
+    CHECK(sameRect(l.pageRect(1), {194, 104, 612, 792}));
+}
+
+TEST_CASE("SinglePage pageAt returns the shown page only")
+{
+    // Shown page 1 spans y 104..895.
+    auto l = makeSingle(kLetter3, 1, 1.0, 1000, 1000);
+    CHECK(l.pageAt(0) == -1);
+    CHECK(l.pageAt(50) == -1);
+    CHECK(l.pageAt(103) == -1);
+    CHECK(l.pageAt(104) == 1);
+    CHECK(l.pageAt(700) == 1);
+    CHECK(l.pageAt(895) == 1);
+    CHECK(l.pageAt(896) == -1);
+    CHECK(l.pageAt(l.totalHeight() - 1) == -1);
+}
+
+TEST_CASE("SinglePage pageAt is -1 in the margins of an overflowing page")
+{
+    // Shown page 0 spans y 12..803 in a 400px viewport; the total height is 816.
+    auto l = makeSingle(kLetter3, 0, 1.0, 1000, 400);
+    CHECK(l.pageAt(11) == -1);
+    CHECK(l.pageAt(12) == 0);
+    CHECK(l.pageAt(803) == 0);
+    CHECK(l.pageAt(804) == -1);
+    CHECK(l.pageAt(815) == -1);
+}
+
+TEST_CASE("SinglePage visiblePages returns only the shown page")
+{
+    // Shown page 1 covers x 194..805 and y 104..895.
+    auto l = makeSingle(kLetter3, 1, 1.0, 1000, 1000);
+    CHECK(l.visiblePages({0, 0, 1000, 1000}) == std::vector<int>{1});
+    CHECK(l.visiblePages({300, 103, 100, 2}) == std::vector<int>{1});
+    // Edge-touching views do not count.
+    CHECK(l.visiblePages({0, 0, 1000, 104}).empty());
+    CHECK(l.visiblePages({0, 896, 1000, 100}).empty());
+    CHECK(l.visiblePages({0, 500, 194, 100}).empty());
+}
+
+TEST_CASE("SinglePage pageToView maps the shown page and gives no rect to other pages")
+{
+    // Shown page 0 is at (194, 104).
+    auto l = makeSingle(kLetter3, 0, 1.0, 1000, 1000);
+    CHECK(sameRect(l.pageToView(0, {0, 0, 612, 792}), {194, 104, 612, 792}));
+    CHECK(sameRect(l.pageToView(0, {100, 200, 50, 60}), {294, 304, 50, 60}));
+    CHECK(sameRect(l.pageToView(1, {0, 0, 10, 10}), {0, 0, 0, 0}));
+}
+
+TEST_CASE("SinglePage viewToPage returns the shown page inside its rect and -1 outside")
+{
+    auto l = makeSingle(kLetter3, 0, 1.0, 1000, 1000);
+    PagePoint p = l.viewToPage({194, 104});
+    CHECK(p.page == 0);
+    CHECK(p.pt.x == doctest::Approx(0.0));
+    CHECK(p.pt.y == doctest::Approx(0.0));
+
+    p = l.viewToPage({494, 504});
+    CHECK(p.page == 0);
+    CHECK(p.pt.x == doctest::Approx(300.0));
+    CHECK(p.pt.y == doctest::Approx(400.0));
+
+    CHECK(l.viewToPage({805, 895}).page == 0);
+    CHECK(l.viewToPage({193, 104}).page == -1);
+    CHECK(l.viewToPage({194, 103}).page == -1);
+    CHECK(l.viewToPage({806, 500}).page == -1);
+    CHECK(l.viewToPage({500, 896}).page == -1);
+}
+
+TEST_CASE("SinglePage pageToView and viewToPage round trip")
+{
+    // Zoom 1.5: shown page 1 is 918x1188, at (41, 12) in a 1000x1212 layout.
+    auto l = makeSingle(kLetter3, 1, 1.5, 1000, 1000);
+    REQUIRE(sameRect(l.pageRect(1), {41, 12, 918, 1188}));
+
+    const double tol = 1.0 / 1.5;
+    const double pts[][2] = {{0, 0}, {100, 200}, {33.3, 77.7}, {611, 791}};
+    for (const auto& pt : pts) {
+        const PageRect v = l.pageToView(1, {pt[0], pt[1], 0, 0});
+        const PagePoint back = l.viewToPage({v.x, v.y});
+        CHECK(back.page == 1);
+        CHECK(std::fabs(back.pt.x - pt[0]) <= tol);
+        CHECK(std::fabs(back.pt.y - pt[1]) <= tol);
+    }
+}
+
+TEST_CASE("Continuous ignores shownPage and viewportHeight")
+{
+    PageLayout base;
+    base.compute(kLetter3, 1.3, 1000, 1.0);
+    PageLayout other;
+    other.compute(kLetter3, 1.3, 1000, 1.0, LayoutMode::Continuous, 2, 5000);
+    REQUIRE(base.pageCount() == other.pageCount());
+    CHECK(base.totalWidth() == other.totalWidth());
+    CHECK(base.totalHeight() == other.totalHeight());
+    for (int i = 0; i < base.pageCount(); ++i)
+        CHECK(sameRect(base.pageRect(i), other.pageRect(i)));
+    CHECK(base.pageRect(0).w > 0);
+}
+
+TEST_CASE("SinglePage with no pages has no pages to hit")
+{
+    auto l = makeSingle({}, 0, 1.0, 1000, 1000);
+    CHECK(l.pageCount() == 0);
+    CHECK(l.pageAt(0) == -1);
+    CHECK(l.visiblePages({0, 0, 1000, 1000}).empty());
+}
+
+TEST_CASE("fit helpers fit a 16:9 page to width and height")
+{
+    // Viewport 1000 x 600 leaves 976 x 576 after the side and top/bottom margins.
+    CHECK(fitWidthZoom(kSlidePage, 1000) == doctest::Approx(976.0 / 960.0));
+    CHECK(fitPageZoom(kSlidePage, 1000, 600) == doctest::Approx(976.0 / 960.0));
+    // Height limits at 400px: (400 - 24) / 540.
+    CHECK(fitPageZoom(kSlidePage, 1000, 400) == doctest::Approx(376.0 / 540.0));
 }

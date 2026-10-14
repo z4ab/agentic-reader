@@ -22,6 +22,7 @@ add_library(reader_core STATIC
     src/chat/SetupBanner.cpp
     src/chat/ToolFormat.cpp
     src/pdf/FindBar.cpp
+    src/pdf/LayoutDetect.cpp
     src/pdf/OpenPdf.cpp
     src/pdf/PageCache.cpp
     src/pdf/PageLayout.cpp

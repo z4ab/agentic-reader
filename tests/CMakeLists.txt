@@ -33,6 +33,10 @@ add_executable(test_instructions_save test_instructions_save.cpp)
 target_link_libraries(test_instructions_save PRIVATE doctest::doctest reader_core)
 add_test(NAME instructions_save COMMAND test_instructions_save)
 
+add_executable(test_layout_detect test_layout_detect.cpp)
+target_link_libraries(test_layout_detect PRIVATE doctest::doctest reader_core)
+add_test(NAME layout_detect COMMAND test_layout_detect)
+
 add_executable(test_markdown test_markdown.cpp)
 target_link_libraries(test_markdown PRIVATE doctest::doctest reader_core)
 add_test(NAME markdown COMMAND test_markdown)
