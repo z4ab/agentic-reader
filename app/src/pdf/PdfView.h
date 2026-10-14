@@ -141,6 +141,9 @@ public:
     // Sends EVT_PDF_LAYOUT_CHANGED when the mode changes. Does nothing with no
     // document.
     void setLayoutMode(LayoutMode mode);
+    // Fullscreen presentation: in SinglePage the area around the page is black
+    // instead of grey. Continuous keeps the grey background.
+    void setPresentation(bool presentation);
 
 private:
     // Asks for a 1-based page number and jumps to it (Ctrl+G).
@@ -209,6 +212,7 @@ private:
     PageLayout m_layout;
     LayoutMode m_layoutMode = LayoutMode::Continuous;
     LayoutMode m_detectedLayout = LayoutMode::Continuous;
+    bool m_presentation = false;
     // SinglePage only: the page on screen, which m_currentPage then equals.
     int m_shownPage = 0;
     // Client size from the last size event. wxGTK's GetClientSize() briefly

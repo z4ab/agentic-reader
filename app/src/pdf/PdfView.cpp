@@ -41,6 +41,8 @@ PdfView::ZoomMode defaultZoomMode(LayoutMode mode)
 }
 
 const wxColour kBackground(0x80, 0x80, 0x80);
+// Around the slide in fullscreen SinglePage.
+const wxColour kPresentationBackground(0x00, 0x00, 0x00);
 const wxColour kBorder(0x40, 0x40, 0x40);
 // 35% of 255: the selection highlight's alpha over the system highlight colour.
 constexpr unsigned char kHighlightAlpha = 89;
@@ -356,6 +358,14 @@ void PdfView::setLayoutMode(LayoutMode mode)
     event.SetEventObject(this);
     event.SetInt(static_cast<int>(mode));
     ProcessWindowEvent(event);
+}
+
+void PdfView::setPresentation(bool presentation)
+{
+    if (presentation == m_presentation)
+        return;
+    m_presentation = presentation;
+    Refresh();
 }
 
 void PdfView::showGoToPageDialog()
@@ -820,7 +830,8 @@ void PdfView::onPaint(wxPaintEvent& /*event*/)
 
     const wxPoint origin = CalcUnscrolledPosition(wxPoint(0, 0));
     const wxSize& client = m_viewport;
-    dc.SetBackground(wxBrush(kBackground));
+    const bool black = m_presentation && m_layoutMode == LayoutMode::SinglePage;
+    dc.SetBackground(wxBrush(black ? kPresentationBackground : kBackground));
     dc.Clear();
 
     if (!m_doc)

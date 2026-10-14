@@ -1,0 +1,186 @@
+# M10.5 acceptance: fullscreen presentation mode on tests/data/slides-16x9.pdf (8 slides,
+# see tests/data/make_slides_pdf.py). Run through tests/acceptance/m10.5.sh, which copies the
+# deck into a saved project, turns on the developer login so the chat input is shown, and
+# uses the slow fake sidecar of M9.1 (tests/acceptance/m9.1-fake-sidecar.sh, a reply of 40
+# pieces every 0.5 s). No Claude calls, no network.
+#
+# Environment limit: Xvfb has no window manager, so ShowFullScreen may not make the window
+# fill the screen. These steps assert on what is hidden or drawn (panes, toolbar, find bar,
+# chat, background colour), never on the window size. If the window keeps its windowed size
+# in fullscreen, the black or grey area is the rest of the window around the slide.
+#
+# Interface choices where the spec is silent (the implementer conforms or files a TEST DISPUTE):
+#   - The View menu gets "&Fullscreen\tF11" after the layout radio items and a separator.
+#     Alt+V opens the View menu. Esc closes it.
+#   - In fullscreen the find bar, when open, stays in the centre pane, so it is visible.
+#   - A selection made before F11 is kept in fullscreen (the same PdfView). The steps select
+#     before F11 because the slide's place in fullscreen depends on the window size.
+#   - Esc with a reply running stops the reply and does not leave fullscreen (M9.1 rule).
+#   - Esc with the find bar focused closes the find bar only (FindBar.cpp).
+#
+# Geometry at the default 1400x900 window, as in m10.3.steps: toolbar y 28..68, page entry
+# (320,48), Single Page toggle x 384..489, Previous (540,48), Next (610,48). PDF pane x 225..980,
+# y 69..875, centre (602,472). Chat input at about (1180, 800). Project pane x 0..220. Chat pane
+# x 980..1400. Single Page at 76%: slide 3 at x 237..968, y 267..677, its body line
+# "Point charlie: ..." at y about 493..516, the word "charlie" at x about 414..479. The drag
+# 300,505 to 700,505 selects the whole body line, "Point charlie: ... slide 3.".
+#
+# Every shot says the page entry ("N / 8") when the toolbar shows.
+wait 3
+click 602 150
+
+# Before fullscreen: Single Page at 76%, entry "1 / 8". Project pane on the left with the
+# project name and slides-16x9.pdf, toolbar on top, PDF pane in the middle, chat pane on the
+# right with an empty message view and the input. "Slide 1" and "Point alpha" are centred in
+# the grey frame of a white slide. These pane edges are the reference for every restore below.
+shot before-fullscreen
+
+# View menu open: below "Continuous" and "Single Page" (radio dot on "Single Page") and a
+# separator, an item "Fullscreen" with F11 at its right. Slide 1 is visible behind the menu.
+key alt+v
+wait 1
+shot view-menu-fullscreen
+
+# Esc closed the menu. Same screen as before-fullscreen, no menu.
+key Escape
+wait 1
+shot view-menu-closed
+
+click 320 48
+key ctrl+a
+type 3
+key Return
+wait 2
+drag 300 505 700 505
+wait 1
+
+# Slide 3, "Slide 3" and "Point charlie" centred, entry "3 / 8". The body line has a selection
+# band over the whole body line, covering "charlie". The "Slide 3" heading is not
+# highlighted. Panes and toolbar visible at the same widths as before-fullscreen.
+shot selected-before-fullscreen
+
+key F11
+wait 2
+
+# Fullscreen, Single Page, slide 3. No project pane, no chat pane, no toolbar. The slide is in
+# the middle with black around it, "Slide 3" and "Point charlie" still centred, and the
+# selection band still on "charlie". No entry or zoom controls are visible.
+shot fullscreen-single
+
+key F11
+wait 2
+
+# Windowed again. Project pane, toolbar, PDF pane and chat pane are back at the same widths as
+# selected-before-fullscreen. Slide 3, entry "3 / 8", selection band still on "charlie".
+shot restored-f11
+
+key F11
+wait 2
+key Escape
+wait 2
+
+# Esc left fullscreen. Same screen as restored-f11: all panes and the toolbar back at the same
+# widths, slide 3, entry "3 / 8".
+shot restored-esc
+
+key F11
+wait 2
+key ctrl+f
+wait 1
+type charlie
+wait 2
+
+# Fullscreen with the find bar open at the top of the slide area. The find field reads
+# "charlie", the count reads "1 of 1", and the match on the body line is highlighted. No project
+# pane, no chat pane, no toolbar.
+shot find-in-fullscreen
+
+key Escape
+wait 1
+
+# Esc closed the find bar and the window is still fullscreen. No find bar, no project pane, no
+# chat pane, no toolbar. Slide 3 is as in fullscreen-single, with black around it.
+shot find-closed-still-fullscreen
+
+key Escape
+wait 2
+
+# Second Esc left fullscreen. Project pane, toolbar, PDF pane and chat pane are back at the same
+# widths as before-fullscreen. No find bar. Slide 3, entry "3 / 8".
+shot esc-left-fullscreen
+
+key ctrl+shift+l
+wait 2
+
+# Continuous at 76%, page 3 kept. Slide 3's top edge is at the top of the PDF pane (y 69 or 81),
+# its heading and body line at the top, and the top of slide 4 is below it at about y 503. Grey
+# background between pages. Panes and toolbar visible, entry "3 / 8".
+shot continuous-windowed
+
+key F11
+wait 2
+
+# Fullscreen in Continuous. No project pane, no chat pane, no toolbar. Pages are stacked on the
+# normal grey Continuous background, not black. Slide 3 is still at the top of the window.
+shot fullscreen-continuous
+
+key F11
+wait 2
+
+# Windowed again, the same as continuous-windowed: all panes and the toolbar at the same widths,
+# entry "3 / 8".
+shot restored-continuous
+
+key ctrl+shift+l
+wait 2
+drag 300 505 700 505
+wait 1
+
+# Single Page on slide 3 again, the same layout as selected-before-fullscreen, with a new selection
+# band on "charlie". Entry "3 / 8".
+shot single-reselected
+
+key F11
+wait 2
+key ctrl+shift+a
+wait 2
+
+# Ctrl+Shift+A left fullscreen. Project pane, toolbar, PDF pane and chat pane are back. The chat
+# input (y 775..833) holds the quote of the selection: lines starting with "> " that contain
+# "charlie", then an empty line with the caret after it. The input has the keyboard focus. The
+# PDF still shows slide 3 with the selection band. No reply was sent, no red notice.
+shot ask-in-fullscreen
+
+key ctrl+a
+key BackSpace
+click 1180 800
+type SLOW reply please
+key Return
+wait 3
+
+# A reply runs in the chat pane: "SLOW reply please" and a few "Slow part N of 40." pieces
+# (about 4 to 8). Stop is enabled, Send is greyed out, the input is empty. Slide 3 is on the
+# left, windowed.
+shot slow-streaming-windowed
+
+key F11
+wait 2
+
+# Fullscreen while the reply runs. No project pane, no chat pane, no toolbar. Slide 3 is on
+# screen. The reply is not visible here because the chat pane is hidden.
+shot fullscreen-while-running
+
+key Escape
+wait 2
+
+# Esc stopped the reply and did not leave fullscreen. The screen is the same as
+# fullscreen-while-running: no project pane, no chat pane, no toolbar.
+shot fullscreen-esc-stopped-reply
+
+key F11
+wait 2
+
+# Windowed again after F11. The chat shows the reply stopped: "SLOW reply please", more than 3
+# and fewer than 40 "Slow part N of 40." pieces, then a grey "Stopped." line. Send is enabled,
+# Stop is greyed out. No red notice. Slide 3 is on the left at the same widths as before.
+shot esc-stopped-then-f11

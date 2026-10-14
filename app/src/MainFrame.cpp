@@ -482,6 +482,10 @@ void MainFrame::buildMenuBar()
     const int singlePageId = wxWindow::NewControlId();
     viewMenu->AppendRadioItem(continuousId, "&Continuous\tCtrl+Shift+L");
     viewMenu->AppendRadioItem(singlePageId, "&Single Page\tCtrl+Shift+L");
+    viewMenu->AppendSeparator();
+    // F11 is caught in the CHAR_HOOK below too, so it works from any focused control.
+    const int fullscreenId = wxWindow::NewControlId();
+    viewMenu->Append(fullscreenId, "&Fullscreen\tF11");
 
     auto* projectMenu = new wxMenu();
     const int instructionsId = wxWindow::NewControlId();
@@ -549,6 +553,7 @@ void MainFrame::buildMenuBar()
          continuousId);
     Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_pdfView->setLayoutMode(LayoutMode::SinglePage); },
          singlePageId);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { setFullscreen(!m_fullscreen); }, fullscreenId);
     for (const int id : {continuousId, singlePageId}) {
         Bind(wxEVT_UPDATE_UI, [this, continuousId, id](wxUpdateUIEvent& event) {
             event.Enable(!m_pdfView->filePath().empty());
@@ -582,12 +587,24 @@ void MainFrame::buildMenuBar()
                 m_chat->nextChat();
             return;
         }
-        // Esc stops a running reply. A modal dialog takes its own Esc, so this
-        // hook does not see it.
-        if (event.GetKeyCode() == WXK_ESCAPE && event.GetModifiers() == wxMOD_NONE
-            && m_chat->canStop()) {
-            m_chat->stop();
+        // Alt is not checked: under Xvfb (shot.sh), xdotool presses Alt around an F-key.
+        if (event.GetKeyCode() == WXK_F11 && !event.ControlDown() && !event.ShiftDown()) {
+            setFullscreen(!m_fullscreen);
             return;
+        }
+        // Esc stops a running reply, then leaves fullscreen. A modal dialog takes
+        // its own Esc, so this hook does not see it. The find bar takes its Esc
+        // first (FindBar::onCharHook), because the focused control's hook runs
+        // before this one.
+        if (event.GetKeyCode() == WXK_ESCAPE && event.GetModifiers() == wxMOD_NONE) {
+            if (m_chat->canStop()) {
+                m_chat->stop();
+                return;
+            }
+            if (m_fullscreen) {
+                setFullscreen(false);
+                return;
+            }
         }
         event.Skip();
     });
@@ -696,6 +713,36 @@ void MainFrame::buildLayout()
 
     inner->SplitVertically(center, m_chat, -kRightPaneWidth);
     outer->SplitVertically(m_projectPanel, inner, kLeftPaneWidth);
+    m_outerSplitter = outer;
+    m_innerSplitter = inner;
+}
+
+void MainFrame::setFullscreen(bool on)
+{
+    if (on == m_fullscreen)
+        return;
+    m_fullscreen = on;
+    // The toolbar is hidden before ShowFullScreen, so wx does not restore it
+    // by itself. It is shown again below.
+    if (on) {
+        m_outerSash = m_outerSplitter->GetSashPosition();
+        m_innerSash = m_innerSplitter->GetSashPosition();
+        m_innerSplitter->Unsplit(m_chat);
+        m_outerSplitter->Unsplit(m_projectPanel);
+        GetToolBar()->Show(false);
+        m_pdfView->setPresentation(true);
+        ShowFullScreen(true, wxFULLSCREEN_ALL);
+        m_pdfView->SetFocus();
+    } else {
+        ShowFullScreen(false, wxFULLSCREEN_ALL);
+        m_pdfView->setPresentation(false);
+        // The outer split first. The inner sash is measured in the inner pane's
+        // width, which only has its windowed size once the project pane is back.
+        m_outerSplitter->SplitVertically(m_projectPanel, m_innerSplitter, m_outerSash);
+        m_innerSplitter->SplitVertically(m_pdfView->GetParent(), m_chat, m_innerSash);
+        GetToolBar()->Show(true);
+    }
+    SendSizeEvent();
 }
 
 void MainFrame::onOpen(wxCommandEvent& /*event*/)
@@ -880,6 +927,8 @@ readercontext::Snapshot MainFrame::readerSnapshot()
 
 void MainFrame::askAboutSelection()
 {
+    // The chat pane is hidden in fullscreen, so leave it first.
+    setFullscreen(false);
     m_pdfView->loadSelectionPages();
     const std::optional<SelectionInfo> selection = m_pdfView->selection();
     if (selection && !selection->text.empty())

@@ -23,6 +23,7 @@ class wxCloseEvent;
 class wxComboBox;
 class wxCommandEvent;
 class wxFileHistory;
+class wxSplitterWindow;
 class wxStaticText;
 class wxTextCtrl;
 class wxTimerEvent;
@@ -113,6 +114,10 @@ private:
     // selection in the chat input. Does nothing without a selection.
     void askAboutSelection();
 
+    // F11 fullscreen: entering hides the project pane, the chat pane and the
+    // toolbar, leaving restores them at the sash positions they had.
+    void setFullscreen(bool on);
+
     void onZoomEntered(wxCommandEvent& event);
     void onPageEntered(wxCommandEvent& event);
     void onPdfPageChanged(wxCommandEvent& event);
@@ -125,6 +130,13 @@ private:
     // Syncs the toolbar toggle with the view's layout mode.
     void showLayout();
 
+    // [project | inner] and [PDF | chat], for fullscreen's unsplit and restore.
+    wxSplitterWindow* m_outerSplitter = nullptr;
+    wxSplitterWindow* m_innerSplitter = nullptr;
+    bool m_fullscreen = false;
+    // Sash positions kept while fullscreen hides the panes.
+    int m_outerSash = 0;
+    int m_innerSash = 0;
     PdfView* m_pdfView = nullptr;
     // Above the PDF view, hidden until Edit > Find (Ctrl+F).
     FindBar* m_findBar = nullptr;
