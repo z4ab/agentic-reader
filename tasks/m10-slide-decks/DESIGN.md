@@ -1,6 +1,6 @@
 # Slide deck support (deferred design)
 
-Design note for M10. It is split into task files M10.1-M10.5 in this folder. Agents work the task files, and this note is background. Q1-Q4 below are answered with the proposed defaults until the user says otherwise.
+Design note for M10. It is split into task files M10.1-M10.5 in this folder. Agents work the task files, and this note is background. The user tried the defaults for Q1-Q4 and kept all four.
 
 Origin: the user wants the PDF view to handle both long "course notes" PDFs (one long document) and lecture slide PDFs. A design agent proposed the design below on 2026-10-08, written against the M2–M6 specs before M2.2 started. M2.2, M2.4, M3.x, M5.3, M6.1 and M6.5 are being built without it, so the "Changes to existing tasks" section describes changes to finished code, not edits to open task files.
 
@@ -31,7 +31,7 @@ Two layout modes, Continuous and Single Page, chosen automatically from page sha
 - X2 Collapsing build pages. Needs M3.1 text and a heuristic.
 - X3 Presenter features: two-page spreads, presenter view, timers, transitions.
 
-## Open questions for the user
+## Questions for the user (answered 2026-10-13: all four defaults kept after the user tried them)
 
 - Q1. Do your lecture decks have many build pages? If so, add a "Skip builds" task that steps over pages whose text is contained in the next page's text.
 - Q2. In fullscreen, should the chat pane hide (proposed) or stay visible with only the project pane and toolbar hidden?

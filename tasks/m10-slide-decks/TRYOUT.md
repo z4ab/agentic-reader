@@ -1,6 +1,6 @@
 # M10 slide decks: try-out guide
 
-M10.1-M10.5 are merged on `main`. Q1-Q4 in `DESIGN.md` shipped with the proposed defaults. Try them on a real deck and tell Claude which ones to change.
+M10.1-M10.5 are merged on `main`. Q1-Q4 in `DESIGN.md` shipped with the proposed defaults. Result (2026-10-13): the user tried them and kept all four defaults (no skip-builds, chat hides in fullscreen, no thumbnails, wheel flips slides).
 
 ## Start
 
