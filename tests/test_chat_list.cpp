@@ -1,3 +1,19 @@
+// M9.2: spec tests for chatlist::neighbor, the step to the next or previous
+// chat that Ctrl+Tab and Ctrl+Shift+Tab use. tests/acceptance/m9.2.sh checks
+// the keys on screen.
+//
+// Interface choice where the spec is silent (the implementer conforms or
+// files a TEST DISPUTE). Declared in app/src/chat/ChatList.h, in namespace
+// chatlist, linked into reader_core:
+//
+//   // The id `step` places from `current` in `ids`, in the order given (the
+//   // dropdown order, newest first, is passed as is and not sorted), wrapping
+//   // at both ends. A positive step goes forward, a negative one back, and a
+//   // step of any size works. Returns `current` when `ids` has fewer than two
+//   // entries (an empty list included) or does not contain `current`.
+//   std::string neighbor(const std::vector<std::string>& ids,
+//                        const std::string& current, int step);
+//
 // M6.4: spec tests for the chat list model (GUI-free): ordering, titles,
 // persistence of chats and transcripts, session ids, delete, the "Continue in
 // new chat" prompt, and the two carried M6.1 notes on Project::appendMessage.
@@ -1087,4 +1103,67 @@ TEST_CASE("chat_list: appends keep every earlier byte of a long transcript")
     REQUIRE(transcript.size() == 301);
     CHECK(transcript[300].text == "one more");
     CHECK(transcript[299].text == std::to_string(299) + body);
+}
+
+TEST_CASE("chat_list: neighbor steps forward to the next id")
+{
+    const std::vector<std::string> ids{"a", "b", "c", "d"};
+    CHECK(chatlist::neighbor(ids, "a", 1) == "b");
+    CHECK(chatlist::neighbor(ids, "b", 1) == "c");
+}
+
+TEST_CASE("chat_list: neighbor steps back to the previous id")
+{
+    const std::vector<std::string> ids{"a", "b", "c", "d"};
+    CHECK(chatlist::neighbor(ids, "d", -1) == "c");
+    CHECK(chatlist::neighbor(ids, "c", -1) == "b");
+}
+
+TEST_CASE("chat_list: neighbor wraps past the last id forward and past the first back")
+{
+    const std::vector<std::string> ids{"a", "b", "c", "d"};
+    CHECK(chatlist::neighbor(ids, "d", 1) == "a");
+    CHECK(chatlist::neighbor(ids, "a", -1) == "d");
+}
+
+TEST_CASE("chat_list: neighbor takes steps larger than 1 and wraps them")
+{
+    const std::vector<std::string> ids{"a", "b", "c", "d", "e"};
+    CHECK(chatlist::neighbor(ids, "a", 2) == "c");
+    CHECK(chatlist::neighbor(ids, "b", 3) == "e");
+    CHECK(chatlist::neighbor(ids, "d", 2) == "a");
+    CHECK(chatlist::neighbor(ids, "a", -2) == "d");
+    CHECK(chatlist::neighbor(ids, "a", 7) == "c");
+    CHECK(chatlist::neighbor(ids, "a", -7) == "d");
+}
+
+TEST_CASE("chat_list: neighbor with a single id returns that id")
+{
+    const std::vector<std::string> ids{"only"};
+    CHECK(chatlist::neighbor(ids, "only", 1) == "only");
+    CHECK(chatlist::neighbor(ids, "only", -1) == "only");
+}
+
+TEST_CASE("chat_list: neighbor with an empty list returns current")
+{
+    const std::vector<std::string> ids;
+    CHECK(chatlist::neighbor(ids, "x", 1) == "x");
+    CHECK(chatlist::neighbor(ids, "x", -1) == "x");
+}
+
+TEST_CASE("chat_list: neighbor returns current when the id is not in the list")
+{
+    const std::vector<std::string> ids{"a", "b", "c"};
+    CHECK(chatlist::neighbor(ids, "zzz", 1) == "zzz");
+    CHECK(chatlist::neighbor(ids, "zzz", -1) == "zzz");
+}
+
+TEST_CASE("chat_list: neighbor follows the order given, and two ids are each other's neighbor")
+{
+    const std::vector<std::string> ids{"newest", "middle", "oldest"};
+    CHECK(chatlist::neighbor(ids, "newest", 1) == "middle");
+    CHECK(chatlist::neighbor(ids, "newest", -1) == "oldest");
+    const std::vector<std::string> two{"x", "y"};
+    CHECK(chatlist::neighbor(two, "x", 1) == "y");
+    CHECK(chatlist::neighbor(two, "x", -1) == "y");
 }

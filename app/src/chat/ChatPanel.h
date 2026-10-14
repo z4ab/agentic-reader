@@ -108,6 +108,10 @@ public:
 
     // Creates a chat and selects it. Does nothing while a reply runs.
     void newChat();
+    // Selects the chat after the selected one in the dropdown, or before it,
+    // wrapping. Does nothing while a reply runs and with no project.
+    void nextChat();
+    void prevChat();
     // Interrupts the running reply (the Stop button, Esc). Does nothing when
     // no reply runs or a stop was already sent.
     void stop();
@@ -130,6 +134,8 @@ private:
     // Shows chat `id` with its transcript and opens it in the sidecar unless
     // this sidecar has it open already.
     void selectChat(const std::string& id);
+    // nextChat() for step 1, prevChat() for -1.
+    void stepChat(int step);
     // Sends new_chat or resume_chat for `id`, unless the sidecar has it open
     // or it cannot resume.
     void openChat(const std::string& id);

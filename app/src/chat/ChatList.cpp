@@ -101,6 +101,18 @@ protocol::Inbound openMessage(const ChatInfo& chat)
     return protocol::NewChat{chat.id, std::nullopt};
 }
 
+std::string neighbor(const std::vector<std::string>& ids, const std::string& current, int step)
+{
+    const auto it = std::find(ids.begin(), ids.end(), current);
+    if (ids.size() < 2 || it == ids.end())
+        return current;
+    const auto size = static_cast<long long>(ids.size());
+    long long pos = (static_cast<long long>(it - ids.begin()) + step) % size;
+    if (pos < 0)
+        pos += size;
+    return ids[static_cast<std::size_t>(pos)];
+}
+
 } // namespace chatlist
 
 ChatList::ChatList(Project* project, Clock clock)

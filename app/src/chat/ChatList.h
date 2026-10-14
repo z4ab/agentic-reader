@@ -38,6 +38,12 @@ std::string continuePrompt(const std::vector<ChatMessage>& transcript, const std
 // failed, so no `result` brought a session id). seq is left empty.
 protocol::Inbound openMessage(const ChatInfo& chat);
 
+// The id `step` places from `current` in `ids`, in the order given, wrapping
+// at both ends. A positive step goes forward, a negative one back, of any
+// size. Returns `current` when `ids` has fewer than two entries or does not
+// contain `current`.
+std::string neighbor(const std::vector<std::string>& ids, const std::string& current, int step);
+
 } // namespace chatlist
 
 // The chats of the open project. With a Project, every change is written

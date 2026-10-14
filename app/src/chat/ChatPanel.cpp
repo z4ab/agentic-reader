@@ -418,6 +418,25 @@ void ChatPanel::newChat()
         noteSaveError(error);
 }
 
+void ChatPanel::nextChat()
+{
+    stepChat(1);
+}
+
+void ChatPanel::prevChat()
+{
+    stepChat(-1);
+}
+
+void ChatPanel::stepChat(int step)
+{
+    if (!canNewChat())
+        return;
+    const std::string id = chatlist::neighbor(m_choiceIds, m_chatId, step);
+    if (id != m_chatId)
+        selectChat(id);
+}
+
 void ChatPanel::openChat(const std::string& id)
 {
     if (!m_hasProject || !m_chats || m_openChats.contains(id) || m_cannotResume.contains(id))

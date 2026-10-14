@@ -1,0 +1,146 @@
+# M9.2 acceptance: Next Chat (Ctrl+Tab), Previous Chat (Ctrl+Shift+Tab), and the
+# Chat menu. Run through tests/acceptance/m9.2.sh (fixture, scratch HOME, fake
+# sidecar that answers prompts with "SLOW" slowly and all others at once).
+#
+# Layout these coordinates assume (1400x900 window at the screen origin, no
+# window manager, as in m9.1.steps): project panel x 0..225, PDF pane x 225..980,
+# chat pane x 980..1400. The chat input is at about (1180, 800), the message view
+# covers (1190, 300), the PDF view is at (600, 600).
+#
+# Interface choices where the spec is silent:
+#   - The chat dropdown lists chats newest first. Each chat's title is its first
+#     prompt, so the dropdown shows "CHARLIE third chat", "BRAVO second chat",
+#     "ALPHA first chat" in that order. Selecting a chat does not change its
+#     position, because only messages move a chat's `updated` time.
+#   - The Chat menu gains "&Next Chat\tCtrl+Tab" and "&Previous Chat\tCtrl+Shift+Tab".
+#   - A quick reply is the single piece "Quick reply.". A "SLOW" prompt streams
+#     40 pieces, one every 0.5 s (about 20 s).
+#   - Clicking outside an open menu closes it. The steps do not press Esc with
+#     a menu open, because the menu takes Esc for itself.
+wait 4
+
+# Three chats, each sent one prompt. The first prompt creates the first chat.
+# Each reply is quick. CHARLIE is the third chat and the selected one. No red
+# notice.
+click 1180 800
+type ALPHA first chat
+key Return
+wait 2
+key ctrl+n
+wait 1
+click 1180 800
+type BRAVO second chat
+key Return
+wait 2
+key ctrl+n
+wait 1
+click 1180 800
+type CHARLIE third chat
+key Return
+wait 2
+
+# The chat dropdown shows "CHARLIE third chat", the selected chat. The message
+# view shows "CHARLIE third chat" and "Quick reply.". The PDF still shows
+# paper.pdf page 1. No red notice.
+shot three-chats
+
+# Ctrl+Tab from the PDF view selects the next chat in dropdown order: BRAVO. The
+# dropdown shows "BRAVO second chat", the message view shows its prompt and
+# "Quick reply.", and the PDF still shows paper.pdf page 1. No red notice.
+click 600 600
+key ctrl+Tab
+wait 1
+shot pdf-next-to-bravo
+
+# Ctrl+Tab again: ALPHA, the chat after BRAVO. The dropdown and the message view
+# show "ALPHA first chat".
+key ctrl+Tab
+wait 1
+shot pdf-next-to-alpha
+
+# Ctrl+Tab again: ALPHA is the last chat, so this wraps to CHARLIE, the first in
+# the dropdown. The dropdown and the message view show "CHARLIE third chat".
+key ctrl+Tab
+wait 1
+shot pdf-next-wraps-to-charlie
+
+# Ctrl+Shift+Tab from CHARLIE, the first chat, wraps back to ALPHA, the last. The
+# dropdown and the message view show "ALPHA first chat".
+key ctrl+shift+Tab
+wait 1
+shot pdf-prev-wraps-to-alpha
+
+# Ctrl+Shift+Tab again goes back one chat to BRAVO. The dropdown and the message
+# view show "BRAVO second chat".
+key ctrl+shift+Tab
+wait 1
+shot pdf-prev-to-bravo
+
+# Ctrl+L moves focus to the chat input without typing anything. Ctrl+Tab from
+# the input selects ALPHA, the chat after BRAVO. The dropdown and the message
+# view show "ALPHA first chat". The input is still empty.
+key ctrl+l
+key ctrl+Tab
+wait 1
+shot input-next-to-alpha
+
+# Ctrl+Tab from the input wraps to CHARLIE. The dropdown and the message view
+# show "CHARLIE third chat".
+key ctrl+Tab
+wait 1
+shot input-next-wraps-to-charlie
+
+# Ctrl+Shift+Tab from the input, at CHARLIE, wraps to ALPHA. The dropdown and the
+# message view show "ALPHA first chat".
+key ctrl+shift+Tab
+wait 1
+shot input-prev-wraps-to-alpha
+
+# Ctrl+Shift+Tab from the input goes back one chat to BRAVO. The dropdown and the
+# message view show "BRAVO second chat". Every shot so far shows no red notice.
+key ctrl+shift+Tab
+wait 1
+shot input-prev-to-bravo
+
+# A slow reply runs in BRAVO. Its message view shows "SLOW reply in bravo" and
+# the "Slow part N of 40." pieces, a few so far. Send is greyed out, Stop is
+# enabled. The dropdown shows "BRAVO second chat".
+click 1180 800
+type SLOW reply in bravo
+key Return
+wait 3
+
+# Ctrl+Tab from the input while the reply runs does nothing. The dropdown still
+# shows "BRAVO second chat" and the message view still shows BRAVO's messages,
+# with the reply still streaming. No other chat appears selected.
+key ctrl+Tab
+wait 1
+shot running-ctrl-tab-from-input-ignored
+
+# Ctrl+Shift+Tab from the input while the reply runs does nothing. The dropdown
+# still shows "BRAVO second chat", and the reply is still streaming.
+key ctrl+shift+Tab
+wait 1
+shot running-ctrl-shift-tab-from-input-ignored
+
+# Ctrl+Tab from the PDF view while the reply runs does nothing. The dropdown
+# still shows "BRAVO second chat", and the reply is still streaming.
+click 600 600
+key ctrl+Tab
+wait 1
+shot running-ctrl-tab-from-pdf-ignored
+
+# Esc from the input stops the reply. The message view shows a grey "Stopped."
+# line after the pieces already shown. The dropdown shows "BRAVO second chat"
+# and is enabled again. No red notice.
+click 1180 800
+key Escape
+wait 2
+
+# Alt+C opens the Chat menu on an idle chat. The menu lists "Next Chat" and
+# "Previous Chat" next to the other items, such as "New Chat" with Ctrl+N and
+# "Focus Chat Input" with Ctrl+L. "Stop Reply" is greyed out. wxGTK cannot show
+# Tab accelerators, so no key hint appears beside the two new items on Linux.
+key alt+c
+wait 1
+shot chat-menu-nav

@@ -470,6 +470,10 @@ void MainFrame::buildMenuBar()
     chatMenu->Append(newChatId, "&New Chat\tCtrl+N");
     const int focusChatId = wxWindow::NewControlId();
     chatMenu->Append(focusChatId, "&Focus Chat Input\tCtrl+L");
+    const int nextChatId = wxWindow::NewControlId();
+    chatMenu->Append(nextChatId, "&Next Chat\tCtrl+Tab");
+    const int prevChatId = wxWindow::NewControlId();
+    chatMenu->Append(prevChatId, "&Previous Chat\tCtrl+Shift+Tab");
     chatMenu->AppendSeparator();
     const int stopReplyId = wxWindow::NewControlId();
     chatMenu->Append(stopReplyId, "&Stop Reply");
@@ -506,6 +510,12 @@ void MainFrame::buildMenuBar()
     Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& event) { event.Enable(m_chat->canNewChat()); },
          newChatId);
     Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_chat->focusInput(); }, focusChatId);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_chat->nextChat(); }, nextChatId);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_chat->prevChat(); }, prevChatId);
+    Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& event) { event.Enable(m_chat->canNewChat()); },
+         nextChatId);
+    Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& event) { event.Enable(m_chat->canNewChat()); },
+         prevChatId);
     Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_chat->stop(); }, stopReplyId);
     Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& event) { event.Enable(m_chat->canStop()); },
          stopReplyId);
@@ -518,6 +528,17 @@ void MainFrame::buildMenuBar()
     Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent& event) {
         if (event.GetKeyCode() == 'A' && event.GetModifiers() == (wxMOD_CONTROL | wxMOD_SHIFT)) {
             askAboutSelection();
+            return;
+        }
+        // Ahead of GTK's focus movement, so Tab does not move focus out of
+        // the chat input or the PDF view.
+        if (event.GetKeyCode() == WXK_TAB
+            && (event.GetModifiers() == wxMOD_CONTROL
+                || event.GetModifiers() == (wxMOD_CONTROL | wxMOD_SHIFT))) {
+            if (event.ShiftDown())
+                m_chat->prevChat();
+            else
+                m_chat->nextChat();
             return;
         }
         // Esc stops a running reply. A modal dialog takes its own Esc, so this
