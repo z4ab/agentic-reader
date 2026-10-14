@@ -1,6 +1,6 @@
 # Slide deck support (deferred design)
 
-Deferred until after M8. This is a design note, not a task. Agents must not pick it up. When work starts, split it into task files in this folder.
+Design note for M10. It is split into task files M10.1-M10.5 in this folder. Agents work the task files, and this note is background. Q1-Q4 below are answered with the proposed defaults until the user says otherwise.
 
 Origin: the user wants the PDF view to handle both long "course notes" PDFs (one long document) and lecture slide PDFs. A design agent proposed the design below on 2026-10-08, written against the M2–M6 specs before M2.2 started. M2.2, M2.4, M3.x, M5.3, M6.1 and M6.5 are being built without it, so the "Changes to existing tasks" section describes changes to finished code, not edits to open task files.
 
